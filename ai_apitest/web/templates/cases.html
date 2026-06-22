@@ -1,0 +1,41 @@
+<section>
+  <div class="section-head"><h2>用例信息</h2><a class="button-link" href="{{DASHBOARD_URL}}">返回仪表盘</a></div>
+  {{MESSAGE}}
+
+  <div class="cases-toolbar">
+    <form method="post" action="/actions/generate" data-background-task data-task-action="generate" style="margin:0">
+      {{HIDDEN_PROJECT}}<button>重新生成用例</button>
+    </form>
+    {{SUPPLEMENT_FORM}}
+  </div>
+
+  <form method="post" action="/actions/run-cases" class="run-panel" data-background-task data-task-action="run">
+    {{HIDDEN_PROJECT}}
+    <div><label>执行模式</label><select name="mode">{{EXECUTION_MODE_OPTIONS}}</select></div>
+    <div><label>并行数</label><input type="number" name="parallel" value="{{PARALLEL}}" min="1" max="32" placeholder="并行线程数"></div>
+    <button>▶ 执行用例</button>
+  </form>
+
+  <section>
+    <div class="section-head"><h3>定时任务</h3></div>
+    <div class="table-wrap"><table><thead><tr><th>任务名称</th><th>范围</th><th>执行时间</th><th>标签/条件</th><th>操作</th></tr></thead><tbody>{{SCHEDULE_ROWS}}</tbody></table></div>
+    <details class="schedule-detail">
+      <summary>新增定时任务</summary>
+      <form method="post" action="/actions/add-schedule" class="schedule-form">
+        {{HIDDEN_PROJECT}}
+        <div><label>任务名称</label><input name="name" placeholder="核心冒烟测试" required></div>
+        <div><label>描述</label><input name="description" placeholder="每日执行冒烟用例"></div>
+        <div><label>执行范围</label><select name="scope"><option value="full">全量用例</option><option value="smoke">冒烟用例（happy_path + 链路）</option></select></div>
+        <div><label>重复方式</label><select name="frequency"><option value="daily">每天</option><option value="once">单次</option></select></div>
+        <div><label>执行时间</label><input type="time" name="run_time" value="09:00" required></div>
+        <div><label>标签筛选（逗号分隔，可选）</label><input name="tags" placeholder="smoke, 用户模块"></div>
+        <div><label>优先级筛选（逗号分隔，可选）</label><input name="priority" placeholder="P0, P1"></div>
+        <button>添加定时任务</button>
+      </form>
+    </details>
+  </section>
+
+  <div class="table-wrap"><table><thead><tr>{{SORT_HEADERS}}</tr></thead><tbody>{{ROWS}}</tbody></table></div>
+  {{PAGER}}
+  {{CASE_MODALS}}
+</section>

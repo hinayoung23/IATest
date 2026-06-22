@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{TITLE}} — AI 接口自动化</title>
+  <script>
+    (function(){var t;try{t=localStorage.getItem('aitest-theme')}catch(e){t=null}if(t){document.documentElement.setAttribute('data-theme',t)}else if(window.matchMedia('(prefers-color-scheme:dark)').matches){document.documentElement.setAttribute('data-theme','dark')}})();
+  </script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="{{SHELL_CLASS}}">
+    {{SIDEBAR}}
+    <div class="content-shell">
+      <header class="topbar">
+        <div>
+          <h1>{{TITLE}}</h1>
+          <p>项目：{{PROJECT}}</p>
+        </div>
+        <div class="project-controls">
+          <button type="button" class="theme-toggle" id="theme-toggle" title="切换主题" aria-label="切换深色/浅色主题">
+            <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          </button>
+          <form class="project-switch" method="get" action="/">
+            <label>切换项目</label>
+            <select name="project" onchange="this.form.submit()">{{PROJECT_OPTIONS}}</select>
+          </form>
+          <button type="button" class="project-create-button" onclick="document.getElementById('project-create-dialog').showModal()">+ 新建项目</button>
+        </div>
+      </header>
+      <main>{{BODY}}</main>
+    </div>
+    {{PROJECT_DIALOG}}
+    <div class="loading-mask" role="status" aria-live="polite">
+      <div class="loading-panel">
+        <div class="spinner"></div>
+        <div class="loading-title" id="loading-title">处理中</div>
+        <div class="loading-desc">请等待当前操作完成</div>
+      </div>
+    </div>
+    <div class="task-panel" data-task-panel hidden>
+      <div class="task-panel-head">
+        <div>
+          <strong data-task-title>任务进行中</strong>
+          <span data-task-status>后台处理中</span>
+        </div>
+        <button type="button" class="ghost" data-task-close>关闭</button>
+      </div>
+      <ol class="task-steps" data-task-steps></ol>
+      <p data-task-detail>后台任务正在执行，请稍作等待。</p>
+      <pre class="task-stream" data-task-stream hidden></pre>
+      <small data-task-hint>任务会在后台继续执行。你可以关闭此提示并查看其它功能；同类任务完成前不能重复发起。</small>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

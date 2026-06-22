@@ -1,0 +1,26 @@
+{
+  "id": "extend_001",
+  "title": "续期邮箱成功",
+  "method": "POST",
+  "path": "/api/extend/{email}",
+  "priority": "P0",
+  "tags": [
+    "extend"
+  ],
+  "design_method": "happy_path",
+  "headers": {},
+  "path_params": {
+    "email": "test123@mail.tempbox.cn"
+  },
+  "query": {},
+  "body": null,
+  "assertions": [
+    {
+      "type": "status_code",
+      "target": "",
+      "operator": "equals",
+      "expected": 200
+    }
+  ],
+  "source": "interface_definition"
+}

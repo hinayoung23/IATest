@@ -1,0 +1,27 @@
+<section>
+  <div class="section-head"><h2>配置中心</h2><a class="button-link" href="{{DASHBOARD_URL}}">返回仪表盘</a></div>
+  {{MESSAGE}}
+</section>
+<section>
+  <h2>大模型配置</h2>
+  <div class="llm-grid">
+    {{LLM_MASTER}}
+    {{LLM_CASE_GENERATOR}}
+    {{LLM_ANALYZER}}
+  </div>
+</section>
+<section>
+  <h2>用例生成策略配置</h2>
+  {{GENERATION_STRATEGIES}}
+  {{CUSTOM_GENERATION_STRATEGIES}}
+</section>
+<section>
+  <h2>用例执行策略配置</h2>
+  <div class="table-wrap"><table><thead><tr><th>策略</th><th>说明</th><th>状态</th></tr></thead><tbody><tr><td>执行冒烟用例</td><td>执行 happy_path 和 dependency_chain 中可运行用例</td><td>启用</td></tr><tr><td>执行全量用例</td><td>执行所有 runnable=true 的用例</td><td>启用</td></tr></tbody></table></div>
+  {{CUSTOM_EXECUTION_STRATEGIES}}
+</section>
+<section>
+  <h2>主控治理配置</h2>
+  <p>主控模型（master）在用例生成和报告分析后自动进行质量审查，输出结构化裁决。低置信裁决自动进入人工确认。</p>
+  <div class="table-wrap"><table><thead><tr><th>配置项</th><th>值</th><th>说明</th><th>操作</th></tr></thead><tbody>{{GOVERNANCE_ROWS}}</tbody></table></div>
+</section>

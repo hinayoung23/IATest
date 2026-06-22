@@ -1,0 +1,61 @@
+<section class="panel">
+  <div class="section-head">
+    <div>
+      <h2>项目上下文</h2>
+      <p>管理 AI 从用例、报告和人工修正中沉淀的可复用经验。</p>
+    </div>
+    <a class="button-link" href="{{DASHBOARD_URL}}">返回仪表盘</a>
+  </div>
+  <div class="context-health">
+    {{HEALTH_CARDS}}
+  </div>
+  {{ANCHOR_NAV}}
+</section>
+
+<section class="panel" id="section-lessons">
+  <div class="section-head">
+    <div>
+      <h2>经验库 <span class="section-badge">{{LESSON_TOTAL}}</span></h2>
+      <p>pending 经验不会自动注入；确认后才会参与后续生成和分析。</p>
+    </div>
+  </div>
+  <form class="filter-row" method="get" action="/context">
+    <input type="hidden" name="project" value="{{PROJECT}}">
+    <label>状态 {{STATUS_SELECT}}</label>
+    <label>类型 {{TYPE_SELECT}}</label>
+    <label>范围 {{SCOPE_SELECT}}</label>
+    <label>搜索 <input name="q" value="{{QUERY}}" placeholder="标题、内容或接口路径"></label>
+    <button>筛选</button>
+  </form>
+  <div class="context-list">
+    {{LESSON_CARDS}}
+  </div>
+  {{LESSON_PAGER}}
+</section>
+
+{{CONFLICT_SECTION}}
+
+{{SIMILAR_SECTION}}
+
+<details class="panel context-fold" id="section-trend" open>
+  <summary class="section-head">
+    <div>
+      <h2>趋势概览</h2>
+      <p>最近执行趋势会在后续报告分析中作为上下文输入。</p>
+    </div>
+  </summary>
+  {{TREND_HTML}}
+</details>
+
+<section class="panel" id="section-audit">
+  <div class="section-head">
+    <div>
+      <h2>审计日志</h2>
+      <p>记录上下文确认、编辑、注入和提取等关键操作。</p>
+    </div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>时间</th><th>来源</th><th>执行动作</th></tr></thead>
+    <tbody>{{AUDIT_ROWS}}</tbody>
+  </table></div>
+</section>

@@ -1,0 +1,26 @@
+{
+  "id": "query_messages_001",
+  "title": "查询邮箱邮件成功",
+  "method": "GET",
+  "path": "/api/messages/{email}",
+  "priority": "P0",
+  "tags": [
+    "messages"
+  ],
+  "design_method": "happy_path",
+  "headers": {},
+  "path_params": {
+    "email": "test123@mail.tempbox.cn"
+  },
+  "query": {},
+  "body": null,
+  "assertions": [
+    {
+      "type": "status_code",
+      "target": "",
+      "operator": "eq",
+      "expected": 200
+    }
+  ],
+  "source": "接口定义"
+}

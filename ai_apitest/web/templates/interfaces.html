@@ -1,0 +1,61 @@
+<section>
+  <div class="section-head"><h2>项目信息</h2><a class="button-link" href="{{DASHBOARD_URL}}">返回仪表盘</a></div>
+  {{MESSAGE}}
+  <div class="source-panel">
+    <div class="source-meta">
+      <label>接口文档来源</label>
+      <div class="source-value" title="{{SOURCE_FULL}}">{{SOURCE_DISPLAY}}</div>
+    </div>
+    <div class="source-actions">
+      <button type="button" class="ghost" onclick="document.getElementById('source-detail-dialog').showModal()" {{SOURCE_DETAIL_DISABLED}}>详情</button>
+      <form method="post" action="/actions/discover" data-background-task data-task-action="discover">
+        {{HIDDEN_PROJECT}}
+        <input type="hidden" name="source" value="{{SOURCE}}">
+        <button>重新识别</button>
+      </form>
+      <button type="button" onclick="document.getElementById('source-edit-dialog').showModal()">修改</button>
+    </div>
+  </div>
+  <dialog id="source-detail-dialog" class="modal">
+    <div class="modal-form">
+      <div class="modal-head"><h3>接口文档来源</h3><button type="button" class="ghost" onclick="document.getElementById('source-detail-dialog').close()">关闭</button></div>
+      <pre class="source-detail">{{SOURCE_FULL}}</pre>
+    </div>
+  </dialog>
+  <dialog id="source-edit-dialog" class="modal" data-reset-on-close>
+    <form method="post" action="/actions/update-source" class="modal-form" data-source-edit data-background-task data-task-action="discover">
+      <div class="modal-head"><h3>修改接口文档来源</h3><button type="button" class="ghost" onclick="cancelDialog('source-edit-dialog')">关闭</button></div>
+      {{HIDDEN_PROJECT}}
+      <input type="hidden" name="source_text">
+      <input type="hidden" name="source_filename">
+      <label>来源类型</label>
+      <select name="source_mode" data-source-mode>
+        <option value="file" selected>本地文件</option>
+        <option value="url">URL</option>
+      </select>
+      <div data-source-section="file">
+        <label>选择本地文档</label>
+        <input type="file" data-source-file accept=".json,.yaml,.yml,.md,.markdown,.html,.txt">
+      </div>
+      <div data-source-section="url" hidden>
+        <label>接口文档 URL</label>
+        <input name="source" value="{{SOURCE}}" placeholder="https://example.com/openapi.json">
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="ghost" onclick="cancelDialog('source-edit-dialog')">取消</button>
+        <button>保存并识别</button>
+      </div>
+    </form>
+  </dialog>
+</section>
+<section>
+  <h2>接口列表</h2>
+  <div class="table-wrap"><table class="wide-table">
+    <thead><tr><th>接口名称</th><th>方法</th><th>路径</th><th>操作</th></tr></thead>
+    <tbody>{{ROWS}}</tbody>
+  </table></div>
+  {{ENDPOINT_MODALS}}
+</section>
+<section>
+  <div class="section-head"><h2>新增接口</h2>{{ENDPOINT_FORM}}</div>
+</section>

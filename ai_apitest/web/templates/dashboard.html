@@ -1,0 +1,36 @@
+<div class="dashboard-hero">
+  <h2>{{PROJECT}} · 测试工作台</h2>
+  <p>管理接口、用例、报告与配置，一站式 API 自动化测试</p>
+</div>
+<div class="dashboard-grid">
+  <a class="metric-card accent-card" href="{{INTERFACES_URL}}">
+    <span>📡 接口信息</span>
+    <strong>{{ENDPOINT_COUNT}}</strong>
+    <small>已识别接口数量</small>
+  </a>
+  <a class="metric-card accent-card" href="{{CASES_URL}}">
+    <span>📋 用例信息</span>
+    <strong>{{CASE_COUNT}}</strong>
+    <small>已生成用例总数</small>
+  </a>
+  <a class="metric-card accent-card" href="{{REPORTS_URL}}">
+    <span>📊 执行报告</span>
+    <strong>{{SUCCESS_RATE}}</strong>
+    <small>上次执行通过率</small>
+  </a>
+  <a class="metric-card" href="{{CONTEXT_URL}}">
+    <span>🧠 项目上下文</span>
+    <strong>{{CONTEXT_COUNT}}</strong>
+    <small>{{CONTEXT_HINT}} · 经验库与审计</small>
+  </a>
+  <a class="metric-card" href="{{CONFIG_URL}}">
+    <span>⚙️ 项目配置</span>
+    <strong>{{LLM_TITLE}}</strong>
+    <small>{{LLM_HINT}} · 生成与执行策略</small>
+  </a>
+  <a class="metric-card quick-run-card" href="{{CASES_URL}}">
+    <span>▶️ 快速执行</span>
+    <strong>Run</strong>
+    <small>跳转到用例页面执行测试</small>
+  </a>
+</div>

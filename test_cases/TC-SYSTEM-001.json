@@ -1,0 +1,24 @@
+{
+  "id": "TC-SYSTEM-001",
+  "title": "健康检查",
+  "method": "GET",
+  "path": "/health",
+  "priority": "P1",
+  "tags": [
+    "system",
+    "happy_path"
+  ],
+  "design_method": "happy_path",
+  "headers": {},
+  "query": {},
+  "body": null,
+  "assertions": [
+    {
+      "type": "status_code",
+      "target": "",
+      "operator": "eq",
+      "expected": 200
+    }
+  ],
+  "source": "GET /health"
+}

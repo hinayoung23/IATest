@@ -1,0 +1,29 @@
+{
+  "id": "TC-USER-001",
+  "title": "创建用户",
+  "method": "POST",
+  "path": "/users",
+  "priority": "P1",
+  "tags": [
+    "user",
+    "happy_path"
+  ],
+  "design_method": "happy_path",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "query": {},
+  "body": {
+    "name": "test_user",
+    "age": 18
+  },
+  "assertions": [
+    {
+      "type": "status_code",
+      "target": "",
+      "operator": "eq",
+      "expected": 201
+    }
+  ],
+  "source": "POST /users"
+}
