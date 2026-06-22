@@ -1,24 +1,26 @@
 # AAPITest
 
+AI-driven API test automation framework. Auto-discover APIs, generate test cases, execute tests, and analyze results — all powered by LLMs.
+
 AI 驱动的接口自动化测试框架。通过大模型自动识别接口、生成用例、执行测试、分析报告。
 
-## 安装
+## Installation / 安装
 
 ```bash
 pip install -e .
 ```
 
-## 快速开始
+## Quick Start / 快速开始
 
-### 1. 初始化项目
+### 1. Initialize / 初始化
 
 ```bash
 aitest init
 ```
 
-### 2. 配置大模型
+### 2. Configure LLM / 配置大模型
 
-编辑 `aitest.json`，配置 master / case_generator / analyzer 三个角色：
+Edit `aitest.json` with three roles: master / case_generator / analyzer.
 
 ```json
 {
@@ -34,13 +36,13 @@ aitest init
 }
 ```
 
-API Key 通过环境变量或 `.env` 文件配置：
+Set API keys via environment variables or `.env`:
 
 ```bash
 export YOUR_API_KEY_ENV=sk-xxxxxxxx
 ```
 
-### 3. 配置测试环境
+### 3. Configure Environment / 配置测试环境
 
 ```json
 {
@@ -54,64 +56,56 @@ export YOUR_API_KEY_ENV=sk-xxxxxxxx
 }
 ```
 
-### 4. 识别接口
+### 4. Discover APIs / 识别接口
 
-支持 OpenAPI JSON、Markdown、HTML 格式的接口文档：
+Supports OpenAPI JSON, Markdown, and HTML API docs:
 
 ```bash
 aitest discover https://example.com/openapi.json --project my-project
 ```
 
-### 5. 生成用例
+### 5. Generate Cases / 生成用例
 
 ```bash
 aitest generate --project my-project
 ```
 
-框架会自动分析接口依赖、制定覆盖计划、分批生成测试用例。生成策略可在配置中自定义。
+The framework automatically analyzes API dependencies, builds coverage plans, and generates test cases in batches. Generation strategies are configurable.
 
-### 6. 执行用例
+框架会自动分析接口依赖、制定覆盖计划、分批生成测试用例。
+
+### 6. Run Tests / 执行用例
 
 ```bash
 aitest run --project my-project
 ```
 
-支持冒烟模式和全量模式，可配置并行数。
+Supports smoke and full modes with configurable parallelism.
 
-### 7. 查看报告
+### 7. View Reports / 查看报告
 
 ```bash
 aitest web --project my-project
 ```
 
-浏览器访问 `http://127.0.0.1:8765` 查看仪表盘、用例、报告和项目上下文。
+Open `http://127.0.0.1:8765` for the dashboard, cases, reports, and project context.
 
-## 用例管理
-
-用例以 Markdown 文件存储，每个项目一个文件：
-
-```
-projects/<project>/test_cases/<project>.md
-```
-
-支持手动编辑，也支持通过 Web 控制台在线编辑。
-
-## 命令行
+## CLI / 命令行
 
 ```bash
-aitest init                          # 初始化项目配置
-aitest discover <source>             # 导入接口文档
-aitest generate --project <name>     # 生成测试用例
-aitest run --project <name>          # 执行测试用例
-aitest web --project <name>          # 启动 Web 控制台
+aitest init                          # Initialize project
+aitest discover <source>             # Import API docs
+aitest generate --project <name>     # Generate test cases
+aitest run --project <name>          # Execute test cases
+aitest web --project <name>          # Start web console
 ```
 
-## 断言类型
+## Assertions / 断言类型
 
-- `status_code` — HTTP 状态码
-- `json_path` — JSON Path 响应字段
-- `header` — 响应头
-- `body_contains` — 响应体包含指定内容
+- `status_code` — HTTP status code
+- `json_path` — JSON Path field assertions
+- `header` — Response header checks
+- `body_contains` — Response body content matching
 
 ## License
 
