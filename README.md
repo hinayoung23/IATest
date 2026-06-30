@@ -1,4 +1,4 @@
-# AAPITest
+# IATest
 
 AI-driven API test automation framework. Auto-discover APIs, generate test cases, execute tests, and analyze results — all powered by LLMs.
 
