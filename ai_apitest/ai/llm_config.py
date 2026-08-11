@@ -20,6 +20,8 @@ def normalize_llm_config(config: dict) -> dict:
         "context_window": 128000,
         "default_output_tokens": 8000,
         "supports_stream": True,
+        "supports_tools": True,
+        "supports_json_schema": False,
     }
     return {
         "master": {**defaults, **config.get("master", {})},

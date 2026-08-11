@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 
 
-PROJECT_CONFIG = "aitest.json"
+PROJECT_CONFIG = "iatest.json"
 
 
 def project_root(start: Path | None = None) -> Path:
@@ -17,7 +17,7 @@ def project_root(start: Path | None = None) -> Path:
 
 def ensure_project_dirs(root: Path, project: str = "default") -> None:
     for path in [
-        root / ".aitest",
+        root / ".iatest",
         project_docs_dir(root, project),
         project_cases_dir(root, project),
         project_reports_dir(root, project),
@@ -59,7 +59,7 @@ def project_reports_dir(root: Path, project: str = "default") -> Path:
 
 
 def project_runtime_dir(root: Path, project: str = "default") -> Path:
-    return project_dir(root, project) / ".aitest"
+    return project_dir(root, project) / ".iatest"
 
 
 def project_context_dir(root: Path, project: str = "default") -> Path:
@@ -82,6 +82,14 @@ def project_metadata_file(root: Path, project: str = "default") -> Path:
     return project_docs_dir(root, project) / "metadata.json"
 
 
+def project_source_snapshot_file(root: Path, project: str = "default") -> Path:
+    return project_docs_dir(root, project) / "source-snapshot.md"
+
+
+def project_coverage_manifest_file(root: Path, project: str = "default") -> Path:
+    return project_cases_dir(root, project) / "coverage-manifest.json"
+
+
 def project_cases_file(root: Path, project: str = "default") -> Path:
     return project_cases_dir(root, project) / f"{safe_project_name(project)}.md"
 
@@ -99,7 +107,7 @@ def reports_dir(root: Path) -> Path:
 
 
 def result_db(root: Path) -> Path:
-    return root / ".aitest" / "results.sqlite3"
+    return root / ".iatest" / "results.sqlite3"
 
 
 def project_result_db(root: Path, project: str = "default") -> Path:
@@ -108,3 +116,15 @@ def project_result_db(root: Path, project: str = "default") -> Path:
 
 def project_context_db(root: Path, project: str = "default") -> Path:
     return project_runtime_dir(root, project) / "context.db"
+
+
+def project_task_db(root: Path, project: str = "default") -> Path:
+    return project_runtime_dir(root, project) / "tasks.sqlite3"
+
+
+def project_agent_db(root: Path, project: str = "default") -> Path:
+    return project_runtime_dir(root, project) / "agent_runs.sqlite3"
+
+
+def project_generation_cache(root: Path, project: str = "default") -> Path:
+    return project_runtime_dir(root, project) / "generation-cache.json"

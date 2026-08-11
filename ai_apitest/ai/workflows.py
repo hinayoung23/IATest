@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
+import hashlib
+import json
 
 from ai_apitest.ai.api_discovery import discover_endpoints_with_llm
 from ai_apitest.ai.case_generation import generate_cases_with_llm, generate_supplemental_cases_with_llm, generate_coverage_plan, generate_cases_from_plan_batch
@@ -12,10 +14,22 @@ from ai_apitest.ai.result_analysis import analyze_results_with_llm, review_faile
 from ai_apitest.context.extraction import process_report_analysis
 from ai_apitest.context.injection import build_context_bundle
 from ai_apitest.context.storage import apply_conflict_review, audit, conflict_pairs, context_connection, merge_lesson_into, now_iso, record_case_generation_lessons
+from ai_apitest.core.artifact_language import (
+    analysis_headings,
+    configured_artifact_language,
+    detect_analysis_language,
+    localize_generated_cases,
+    output_language_instruction,
+    set_current_artifact_language,
+)
 from ai_apitest.core.paths import project_docs_dir, safe_project_name
 from ai_apitest.core.config import load_config
+from ai_apitest.core.observability import record_operational_error
 from ai_apitest.core.models import CaseResult, Endpoint, TestCase
 from ai_apitest.generator.cases import attach_cleanup_steps, attach_setup_steps, generate_cases
+
+
+GENERATION_PIPELINE_VERSION = "2026-08-11.1"
 
 
 DEFAULT_STRATEGY_DESCRIPTIONS = {
@@ -34,7 +48,7 @@ def configured_llm(root: Path, role: str) -> dict:
     return resolve_llm_role(normalize_llm_config(load_config(root).get("llm", {})), role)
 
 
-def case_generation_strategy_context(root: Path) -> dict:
+def case_generation_strategy_context(root: Path, endpoints: list[Endpoint] | None = None) -> dict:
     generation = load_config(root).get("case_generation", {})
     default_flags = generation.get("default_strategies", {})
     enabled_defaults = []
@@ -51,11 +65,134 @@ def case_generation_strategy_context(root: Path) -> dict:
     return {
         "enabled_default_strategies": enabled_defaults,
         "custom_strategies": custom,
+        "strategy_applicability": strategy_applicability(endpoints or []),
         "generation_requirements": [
             "按启用策略尽可能全面生成用例，不要只生成 happy_path。",
+            "启用表示允许在适用接口上生成，并不表示每个接口都必须机械生成；以 strategy_applicability 的 Schema 判定为准。",
             "无法安全执行的破坏性、依赖外部状态或明显缺少前置数据的负向用例，runnable 应设为 false，并说明 risk。",
             "存在接口依赖时优先使用 steps 生成链路用例，例如先生成邮箱再查询、续期或删除。",
         ],
+    }
+
+
+def strategy_applicability(endpoints: list[Endpoint]) -> dict[str, dict[str, object]]:
+    if not endpoints:
+        return {}
+    from ai_apitest.domain.coverage import (
+        first_response_basis,
+        has_auth,
+        has_constraints,
+        has_distinct_equivalence_input,
+        has_path_parameter,
+        has_typed_input,
+        numeric_statuses,
+        optional_body_fields,
+    )
+
+    def matching(predicate) -> list[str]:
+        return [
+            f"{endpoint.method.upper()} {endpoint.path}"
+            for endpoint in endpoints
+            if predicate(endpoint)
+        ]
+
+    def has_rule_strategy(endpoint: Endpoint, *strategies: str) -> bool:
+        accepted = set(strategies)
+        return any(
+            isinstance(rule, dict)
+            and rule.get("testable", True)
+            and str(rule.get("strategy") or "") in accepted
+            for rule in endpoint.business_rules
+        )
+
+    optional = matching(
+        lambda endpoint: has_rule_strategy(endpoint, "optional_field") or any(
+            item.get("in") == "query" and not item.get("required")
+            for item in endpoint.parameters
+        ) or bool(optional_body_fields(endpoint))
+    )
+    typed = matching(
+        lambda endpoint: (
+            has_rule_strategy(endpoint, "type_error")
+            or has_typed_input(endpoint)
+        )
+        and bool(first_response_basis(endpoint, {400, 415, 422}))
+    )
+    boundary = matching(
+        lambda endpoint: (
+            has_rule_strategy(endpoint, "boundary_value")
+            or has_constraints(endpoint)
+        )
+        and bool(first_response_basis(endpoint, {400, 416, 422}))
+    )
+    path_error = matching(
+        lambda endpoint: has_path_parameter(endpoint)
+        and bool(first_response_basis(endpoint, {400, 404, 422}))
+    )
+    auth = matching(
+        lambda endpoint: has_auth(endpoint)
+        and bool(first_response_basis(endpoint, {401, 403}))
+    )
+    equivalence = matching(
+        lambda endpoint: has_rule_strategy(endpoint, "equivalence_class")
+        or has_distinct_equivalence_input(endpoint)
+    )
+    status_contracts = [
+        f"{endpoint.method.upper()} {endpoint.path} responses.{status}"
+        for endpoint in endpoints
+        for status in numeric_statuses(endpoint)
+        if status >= 400
+    ]
+
+    def item(matches: list[str], unavailable_reason: str) -> dict[str, object]:
+        return {
+            "applicable": bool(matches),
+            "matching_count": len(matches),
+            "matches": matches,
+            "unavailable_reason": "" if matches else unavailable_reason,
+        }
+
+    return {
+        "happy_path": item(
+            [f"{endpoint.method.upper()} {endpoint.path}" for endpoint in endpoints],
+            "",
+        ),
+        "optional_field": item(optional, "接口集没有可选 Query 或请求体字段。"),
+        "type_error": item(
+            typed,
+            "HTTP Path/Query/Header 的 string 在线上传输仍是字符串，且请求体没有可验证的非字符串类型错误或对应文档错误响应。",
+        ),
+        "boundary_value": item(boundary, "接口 Schema 未声明长度、范围、枚举或数组边界及对应错误响应。"),
+        "path_parameter_error": item(path_error, "路径参数接口未声明可匹配的 400/404/422 响应。"),
+        "auth_error": item(auth, "接口未声明鉴权要求及 401/403 响应。"),
+        "equivalence_class": item(equivalence, "接口 Schema 没有多值 enum 或 boolean 等可区分等价类。"),
+        "status_code_coverage": item(status_contracts, "接口文档没有声明 4xx/5xx 响应。"),
+        "dependency_chain": {
+            "applicable": bool(
+                chain_matches := matching(
+                    lambda endpoint: has_rule_strategy(endpoint, "dependency_chain")
+                )
+            ) or "由项目依赖图判定",
+            "matching_count": len(chain_matches),
+            "matches": chain_matches,
+            "unavailable_reason": "",
+        },
+        "business_rule_coverage": {
+            "applicable": any(endpoint.business_rules for endpoint in endpoints),
+            "matching_count": sum(
+                1
+                for endpoint in endpoints
+                for rule in endpoint.business_rules
+                if isinstance(rule, dict) and rule.get("testable", True)
+            ),
+            "matches": [
+                str(rule.get("rule_id"))
+                for endpoint in endpoints
+                for rule in endpoint.business_rules
+                if isinstance(rule, dict) and rule.get("testable", True) and rule.get("rule_id")
+            ],
+            "unavailable_reason": "",
+        },
     }
 
 
@@ -65,29 +202,324 @@ def apply_ai_discovery_if_configured(
     endpoints: list[Endpoint],
     metadata: dict,
     stream_callback: Callable[[str], None] | None = None,
+    project: str = "default",
 ) -> tuple[list[Endpoint], dict]:
     llm = configured_llm(root, "master")
     if not is_llm_configured(llm):
         return endpoints, metadata
-    try:
-        ai_endpoints = discover_endpoints_with_llm(text, llm, stream_callback=stream_callback)
-    except Exception as exc:
-        metadata["ai_discovery_error"] = str(exc)
-        return endpoints, metadata
-    if not ai_endpoints:
-        metadata["ai_discovery_error"] = "大模型未识别到接口"
-        return endpoints, metadata
+    config = load_config(root)
+    discovery_mode = str(config.get("agents", {}).get("api_discovery_mode") or "agent").strip().lower()
+    from ai_apitest.application.quality_audit import QualityAuditService
+    from ai_apitest.core.serde import endpoint_from_dict, to_jsonable
+
+    deterministic_endpoints = list(endpoints)
+    deterministic_keys = {(item.method.upper(), item.path) for item in deterministic_endpoints}
+    audit_service = QualityAuditService(
+        root,
+        project,
+        "endpoint_catalog",
+        endpoints=deterministic_endpoints,
+        metadata={"source_type": metadata.get("source_type", ""), "document_chars": len(text)},
+    )
+    quality_feedback: dict | None = (
+        metadata.pop("upstream_repair_feedback", None)
+        if isinstance(metadata.get("upstream_repair_feedback"), dict)
+        else None
+    )
+    audit_retry_candidate: list[Endpoint] | None = None
+    selected_round = None
+    round_summaries: list[dict] = []
+    for round_index in range(1, audit_service.policy.max_rounds + 1):
+        audit_retry_only = audit_retry_candidate is not None
+        if audit_retry_candidate is not None:
+            candidate = audit_retry_candidate
+        else:
+            ai_endpoints: list[Endpoint] = []
+            try:
+                if metadata.get("source_type") == "openapi" and deterministic_endpoints and round_index == 1:
+                    ai_endpoints = deterministic_endpoints
+                    metadata["ai_discovery_skipped"] = (
+                        "OpenAPI 首轮由确定性解析器完整解析；低于审计阈值时再由接口识别模型修订"
+                    )
+                elif discovery_mode == "agent":
+                    from ai_apitest.application.discovery import discover_endpoints_with_agent_runtime
+
+                    ai_endpoints = discover_endpoints_with_agent_runtime(
+                        root,
+                        project,
+                        text,
+                        llm,
+                        expected_endpoints=deterministic_endpoints,
+                        quality_feedback=quality_feedback,
+                        quality_round=round_index,
+                        stream_callback=stream_callback,
+                    )
+                elif discovery_mode == "legacy":
+                    ai_endpoints = discover_endpoints_with_llm(
+                        text,
+                        llm,
+                        stream_callback=stream_callback,
+                        quality_feedback=quality_feedback,
+                    )
+                else:
+                    raise ValueError(f"不支持的接口识别模式：{discovery_mode}")
+            except Exception as exc:
+                metadata["ai_discovery_error"] = str(exc)
+                record_operational_error(
+                    root,
+                    project,
+                    component="ai_discovery",
+                    operation="discover_endpoints",
+                    error=exc,
+                    detail={"quality_round": round_index},
+                )
+            candidate = merge_endpoint_candidates(deterministic_endpoints, ai_endpoints)
+        gate_issues = endpoint_catalog_gate_issues(candidate, deterministic_endpoints)
+        audit_round = audit_service.evaluate(
+            to_jsonable(candidate),
+            evidence={
+                "document_text": text,
+                "deterministic_gate_summary": {
+                    "endpoint_keys": [
+                        {"method": item.method.upper(), "path": item.path}
+                        for item in deterministic_endpoints
+                    ],
+                    "hard_gate_issue_count": len(gate_issues),
+                    "note": "确定性解析结果已由本地硬门禁逐字段核对，不在审计包中重复发送整份接口产物。",
+                },
+                "source_metadata": {
+                    "source_type": metadata.get("source_type", ""),
+                    "source": metadata.get("source", ""),
+                    "base_url": metadata.get("base_url", ""),
+                },
+            },
+            round_index=round_index,
+            hard_gate_issues=gate_issues,
+            producer_model_key=model_config_key(llm),
+            stream_callback=stream_callback,
+        )
+        round_summaries.append(
+            {
+                "round": round_index,
+                "score": audit_round.average_score,
+                "passed": audit_round.passed,
+                "candidate_id": audit_round.candidate_id,
+                "audit_retry_only": audit_retry_only,
+            }
+        )
+        if audit_round.passed:
+            selected_round = audit_round
+            break
+        if audit_round.hard_gate_pass and not audit_round.audit_complete:
+            audit_retry_candidate = candidate
+            quality_feedback = None
+        else:
+            audit_retry_candidate = None
+            quality_feedback = audit_round.repair_feedback()
+    if selected_round is None:
+        selected_round = audit_service.best_safe_round()
+    if selected_round is None:
+        merged_endpoints = deterministic_endpoints
+        audit_service.finalize(
+            None,
+            decision="deterministic_fallback",
+            reason="三轮审计后没有安全候选，交付确定性接口解析基线。",
+        )
+        metadata["quality_audit_fallback"] = "deterministic_parser"
+    else:
+        merged_endpoints = [
+            endpoint_from_dict(item)
+            for item in selected_round.artifact
+            if isinstance(item, dict)
+        ]
+        decision = "accepted" if selected_round.passed else "highest_safe_candidate"
+        audit_service.finalize(
+            selected_round,
+            decision=decision,
+            reason=(
+                "接口信息质量审计通过。"
+                if selected_round.passed
+                else "三轮未达阈值，交付通过硬门禁且无 critical 问题的最高分候选。"
+            ),
+        )
+    ai_keys = {(item.method.upper(), item.path) for item in merged_endpoints}
+    missing_ai_keys = sorted(deterministic_keys - ai_keys)
+    metadata["quality_audit_session_id"] = audit_service.session_id
+    metadata["quality_audit_rounds"] = round_summaries
+    metadata["quality_audit_score"] = selected_round.average_score if selected_round else None
     metadata["source_type"] = f"{metadata.get('source_type', 'document')}+ai"
     metadata["ai_discovery"] = True
+    metadata["deterministic_endpoint_count"] = len(deterministic_keys)
+    metadata["ai_endpoint_count"] = len(ai_keys)
+    from ai_apitest.application.discovery import normalize_document_for_agent
+    from ai_apitest.domain.contracts import TRUSTED_CONTRACT_VERSION, contract_hash
+
+    normalized_source = normalize_document_for_agent(text)
+    metadata["contract_version"] = TRUSTED_CONTRACT_VERSION
+    metadata["contract_hash"] = contract_hash(merged_endpoints)
+    metadata["contract_status"] = (
+        "trusted"
+        if selected_round is not None and selected_round.passed
+        else "fallback"
+    )
+    metadata["source_snapshot_sha256"] = hashlib.sha256(
+        normalized_source.encode("utf-8")
+    ).hexdigest()
+    metadata["business_rule_count"] = sum(
+        len(endpoint.business_rules)
+        for endpoint in merged_endpoints
+    )
+    if missing_ai_keys:
+        metadata["ai_missing_endpoints_recovered"] = [
+            {"method": method, "path": path} for method, path in missing_ai_keys
+        ]
+    # Build a deterministic graph first. AI may add semantic edges, but cannot
+    # remove schema-proven producer/consumer relationships.
+    from ai_apitest.context.dependencies import dependency_edge_identity, infer_dependency_edges
+
+    local_graph = {"edges": infer_dependency_edges(merged_endpoints), "source": "local_rule"}
+    metadata["dependency_graph"] = local_graph
     # Generate dependency graph via master
     try:
-        from ai_apitest.ai.api_discovery import generate_dependency_graph
-        dep_graph = generate_dependency_graph(ai_endpoints, llm)
+        if discovery_mode == "agent":
+            from ai_apitest.application.discovery import generate_dependency_graph_with_agent_runtime
+
+            dep_graph = generate_dependency_graph_with_agent_runtime(
+                root,
+                project,
+                merged_endpoints,
+                llm,
+                existing_graph=local_graph,
+            )
+        else:
+            from ai_apitest.ai.api_discovery import generate_dependency_graph
+
+            dep_graph = generate_dependency_graph(merged_endpoints, llm)
         if dep_graph and dep_graph.get("edges"):
-            metadata["dependency_graph"] = dep_graph
-    except Exception:
-        pass
-    return ai_endpoints, metadata
+            combined = {dependency_edge_identity(edge): edge for edge in local_graph["edges"]}
+            for edge in dep_graph["edges"]:
+                combined.setdefault(dependency_edge_identity(edge), edge)
+            metadata["dependency_graph"] = {
+                "edges": list(combined.values()),
+                "source": "local_rule+ai_review",
+                "rule": dep_graph.get("rule", ""),
+            }
+    except Exception as exc:
+        record_operational_error(root, project, component="ai_discovery", operation="dependency_graph", error=exc)
+    return merged_endpoints, metadata
+
+
+def merge_endpoint_candidates(
+    deterministic: list[Endpoint],
+    ai_endpoints: list[Endpoint],
+) -> list[Endpoint]:
+    ai_by_key = {(item.method.upper(), item.path): item for item in ai_endpoints}
+    merged = [
+        merge_discovered_endpoint(item, ai_by_key.get((item.method.upper(), item.path)))
+        for item in deterministic
+    ]
+    merged_keys = {(item.method.upper(), item.path) for item in merged}
+    merged.extend(
+        item for item in ai_endpoints if (item.method.upper(), item.path) not in merged_keys
+    )
+    return merged
+
+
+def endpoint_catalog_gate_issues(
+    candidate: list[Endpoint],
+    deterministic: list[Endpoint],
+) -> list[dict]:
+    issues: list[dict] = []
+    candidate_keys = [(item.method.upper(), item.path) for item in candidate]
+    missing = sorted({(item.method.upper(), item.path) for item in deterministic} - set(candidate_keys))
+    for method, path in missing:
+        issues.append(
+            {
+                "severity": "critical",
+                "dimension": "completeness",
+                "location": f"{method} {path}",
+                "evidence": "确定性解析器从同一接口文档中识别出该接口。",
+                "reason": "候选接口目录遗漏确定性清单中的接口。",
+                "suggested_fix": "重新读取对应文档片段并补齐接口。",
+            }
+        )
+    duplicates = sorted({key for key in candidate_keys if candidate_keys.count(key) > 1})
+    for method, path in duplicates:
+        issues.append(
+            {
+                "severity": "high",
+                "dimension": "non_redundancy",
+                "location": f"{method} {path}",
+                "evidence": "候选目录中存在相同 method/path 的重复记录。",
+                "reason": "接口目录包含重复接口。",
+                "suggested_fix": "合并重复记录并保留有文档依据的字段。",
+            }
+        )
+    from ai_apitest.domain.contracts import contract_catalog_issues
+
+    issues.extend(contract_catalog_issues(candidate, deterministic))
+    return issues
+
+
+def model_config_key(value: dict) -> str:
+    provider = str(value.get("provider") or "openai-compatible").strip().lower()
+    base_url = str(value.get("base_url") or "").strip().rstrip("/").lower()
+    model = str(value.get("model") or "").strip().lower()
+    return f"{provider}|{base_url}|{model}"
+
+
+def case_quality_gate_issues(
+    cases: list[TestCase],
+    endpoints: list[Endpoint],
+) -> list[dict]:
+    if not cases:
+        return [
+            {
+                "severity": "critical",
+                "dimension": "completeness",
+                "location": "用例集",
+                "evidence": f"当前接口目录包含 {len(endpoints)} 个接口。",
+                "reason": "用例产物为空。",
+                "suggested_fix": "重新生成覆盖真实接口的可执行用例。",
+            }
+        ]
+    from ai_apitest.domain.case_drafts import validate_compiled_cases
+
+    issues: list[dict] = []
+    for item in validate_compiled_cases(cases, endpoints):
+        raw = item.to_dict()
+        severity = "critical" if raw.get("severity") == "error" else "warning"
+        issues.append(
+            {
+                "severity": severity,
+                "dimension": case_issue_dimension(str(raw.get("code") or "")),
+                "location": str(raw.get("scenario_id") or "用例集"),
+                "evidence": f"本地统一用例门禁：{raw.get('code') or 'validation'}",
+                "reason": str(raw.get("message") or "用例未通过本地门禁"),
+                "suggested_fix": "根据接口定义和用例语义定向修订该场景。",
+            }
+        )
+    from ai_apitest.domain.contracts import coverage_manifest_issues
+
+    issues.extend(coverage_manifest_issues(endpoints, cases))
+    return issues
+
+
+def case_issue_dimension(code: str) -> str:
+    lowered = code.lower()
+    if any(marker in lowered for marker in ("missing", "coverage", "assertion")):
+        return "completeness"
+    if any(marker in lowered for marker in ("duplicate", "redund")):
+        return "non_redundancy"
+    if any(marker in lowered for marker in ("title", "intent", "runnable", "chain")):
+        return "reasonableness"
+    return "reliability"
+
+
+def merge_discovered_endpoint(deterministic: Endpoint, ai: Endpoint | None) -> Endpoint:
+    from ai_apitest.domain.contracts import merge_endpoint_contract
+
+    return merge_endpoint_contract(deterministic, ai)
 
 
 def generate_cases_with_config(
@@ -96,12 +528,437 @@ def generate_cases_with_config(
     project: str = "default",
     stream_callback: Callable[[str], None] | None = None,
     llm_override: dict | None = None,
+    force_refresh: bool = False,
+    artifact_language: str | None = None,
+) -> tuple[list[TestCase], str]:
+    config = load_config(root)
+    language = configured_artifact_language(config, artifact_language)
+    set_current_artifact_language(language)
+    config.setdefault("artifacts", {})["language"] = language
+    endpoints, contract_warning = ensure_trusted_contract_for_generation(
+        root,
+        project,
+        endpoints,
+        stream_callback=stream_callback,
+    )
+    llm = llm_override or configured_llm(root, "case_generator")
+    fingerprint = case_generation_fingerprint(root, project, endpoints, config, llm)
+    if not force_refresh and bool(config.get("agents", {}).get("reuse_generation_cache", True)):
+        cached = load_generation_cache(root, project, fingerprint, endpoints)
+        if cached is not None:
+            return cached, "；".join(
+                item
+                for item in (
+                    contract_warning,
+                    "输入、策略、经验和模型配置均未变化，已复用通过质量门禁的生成缓存",
+                )
+                if item
+            )
+    from ai_apitest.application.quality_audit import QualityAuditService
+    from ai_apitest.core.serde import read_json, to_jsonable
+    from ai_apitest.domain.case_drafts import validate_compiled_cases
+    from ai_apitest.domain.contracts import build_coverage_manifest
+
+    audit_service = QualityAuditService(
+        root,
+        project,
+        "test_cases",
+        endpoints=endpoints,
+        metadata={"operation": "full_generation", "endpoint_count": len(endpoints)},
+    )
+    feedback: dict | None = None
+    audit_retry_cases: list[TestCase] | None = None
+    audit_retry_diagnostics = ""
+    audit_retry_reason = ""
+    warnings: list[str] = [contract_warning] if contract_warning else []
+    selected_round = None
+    contract_metadata = read_json(
+        project_docs_dir(root, project) / "metadata.json",
+        {},
+    )
+    for round_index in range(1, audit_service.policy.max_rounds + 1):
+        if audit_retry_cases is not None:
+            cases = audit_retry_cases
+            round_diagnostics = audit_retry_diagnostics
+            warnings.append(
+                audit_retry_reason
+                or f"第 {round_index} 轮复用上一轮候选，未重复调用完整产出模型"
+            )
+        else:
+            round_diagnostics = ""
+            try:
+                cases, warning = _generate_cases_without_cache(
+                    root,
+                    endpoints,
+                    project=project,
+                    stream_callback=stream_callback,
+                    llm_override=llm_override,
+                    quality_feedback=feedback,
+                    quality_round=round_index,
+                )
+                round_diagnostics = warning
+                if warning:
+                    warnings.append(warning)
+            except Exception as exc:
+                cases = []
+                round_diagnostics = f"用例产出失败：{exc}"
+                warnings.append(f"第 {round_index} 轮用例产出失败：{exc}")
+                record_operational_error(
+                    root,
+                    project,
+                    component="quality_audit",
+                    operation="produce_test_cases",
+                    error=exc,
+                    detail={"round": round_index},
+                )
+        cases = localize_generated_cases(cases, language)
+        gate_issues = case_quality_gate_issues(cases, endpoints)
+        audit_round = audit_service.evaluate(
+            to_jsonable(cases),
+            evidence={
+                "endpoints": to_jsonable(endpoints),
+                "trusted_contract": {
+                    "contract_version": contract_metadata.get("contract_version", ""),
+                    "contract_hash": contract_metadata.get("contract_hash", ""),
+                    "contract_status": contract_metadata.get("contract_status", ""),
+                },
+                "dependency_graph": read_json(
+                    project_docs_dir(root, project) / "metadata.json",
+                    {},
+                ).get("dependency_graph", {}),
+                "generation_strategies": case_generation_strategy_context(root, endpoints),
+                "generation_diagnostics": round_diagnostics,
+                "coverage_manifest": build_coverage_manifest(endpoints, cases),
+                "local_gate_issues": [
+                    item.to_dict()
+                    for item in validate_compiled_cases(cases, endpoints)
+                ] if cases else [],
+            },
+            round_index=round_index,
+            hard_gate_issues=gate_issues,
+            producer_model_key=model_config_key(llm),
+            stream_callback=stream_callback,
+        )
+        if audit_round.passed:
+            selected_round = audit_round
+            break
+        if audit_round.hard_gate_pass and not audit_round.audit_complete:
+            audit_retry_cases = cases
+            audit_retry_diagnostics = round_diagnostics
+            audit_retry_reason = (
+                f"第 {round_index + 1} 轮仅重试未完成的审计模型，"
+                "复用上一轮候选，未重复调用产出模型"
+            )
+            feedback = None
+        else:
+            repair_feedback = audit_round.repair_feedback()
+            repaired, repair_message = repair_cases_targeted_from_audit(
+                root,
+                project,
+                cases,
+                endpoints,
+                repair_feedback,
+                llm,
+            )
+            if repaired is not None:
+                audit_retry_cases = repaired
+                audit_retry_diagnostics = "；".join(
+                    item for item in (round_diagnostics, repair_message) if item
+                )
+                audit_retry_reason = (
+                    f"第 {round_index + 1} 轮复用上一轮未受影响用例，"
+                    f"{repair_message}"
+                )
+                feedback = None
+            else:
+                audit_retry_cases = None
+                audit_retry_diagnostics = ""
+                audit_retry_reason = ""
+                feedback = repair_feedback
+    if selected_round is None:
+        selected_round = audit_service.best_safe_round()
+    if selected_round is not None:
+        from ai_apitest.core.serde import case_from_dict
+
+        cases = [
+            case_from_dict(item)
+            for item in selected_round.artifact
+            if isinstance(item, dict)
+        ]
+        accepted = selected_round.passed
+        audit_service.finalize(
+            selected_round,
+            decision="accepted" if accepted else "highest_safe_candidate",
+            reason=(
+                "最终用例质量审计通过。"
+                if accepted
+                else "三轮未达阈值，交付通过硬门禁且无 critical 问题的最高分候选。"
+            ),
+        )
+        score = f"{selected_round.average_score:.2f}" if selected_round.average_score is not None else "-"
+        warnings.append(
+            f"质量审计{'通过' if accepted else '安全兜底'}："
+            f"第 {selected_round.round_index} 轮，平均分 {score}，审计会话 {audit_service.session_id}"
+        )
+    else:
+        cases = localize_generated_cases(generate_cases(endpoints), language)
+        fallback_issues = case_quality_gate_issues(cases, endpoints)
+        if fallback_issues:
+            cases = []
+        audit_service.finalize(
+            None,
+            decision="deterministic_fallback" if cases else "no_safe_artifact",
+            reason=(
+                "三轮后没有安全模型候选，交付确定性标准用例。"
+                if cases
+                else "三轮后没有安全模型候选，确定性用例也未通过硬门禁。"
+            ),
+        )
+        warnings.append(
+            "三轮质量审计后没有安全模型候选，"
+            + ("已交付确定性标准用例" if cases else "未覆盖现有用例文件")
+        )
+    if cases:
+        try:
+            record_case_generation_lessons(root, project, cases, actor="quality:selected_case_artifact")
+        except Exception as exc:
+            record_operational_error(
+                root,
+                project,
+                component="context",
+                operation="record_selected_case_lessons",
+                error=exc,
+            )
+        save_generation_cache(root, project, fingerprint, cases)
+    return cases, "；".join(dict.fromkeys(item for item in warnings if item))
+
+
+def repair_cases_targeted_from_audit(
+    root: Path,
+    project: str,
+    cases: list[TestCase],
+    endpoints: list[Endpoint],
+    feedback: dict[str, Any],
+    llm: dict[str, Any],
+) -> tuple[list[TestCase] | None, str]:
+    """Repair only cases named by evidence-backed audit issues.
+
+    Missing coverage without an existing case and artifact-wide findings still
+    require a new planning pass. They intentionally return ``None`` so the
+    caller regenerates with audit feedback.
+    """
+    if not cases or not is_llm_configured(llm):
+        return None, ""
+    issues = feedback.get("issues") if isinstance(feedback, dict) else None
+    if not isinstance(issues, list):
+        return None, ""
+    impacted_ids: set[str] = set()
+    for issue in issues:
+        if not isinstance(issue, dict) or str(issue.get("severity") or "") == "info":
+            continue
+        location = str(
+            issue.get("location")
+            or issue.get("scenario_id")
+            or issue.get("case_id")
+            or ""
+        ).strip()
+        if not location or location == "产物整体":
+            continue
+        for case in cases:
+            identities = [case.id, case.scenario_id, *case.rule_ids]
+            if any(identity and identity in location for identity in identities):
+                impacted_ids.add(case.id)
+    if not impacted_ids or len(impacted_ids) == len(cases):
+        return None, ""
+    impacted = [case for case in cases if case.id in impacted_ids]
+    try:
+        from ai_apitest.application.case_maintenance import maintain_cases_with_agent_runtime
+
+        result = maintain_cases_with_agent_runtime(
+            root,
+            project,
+            impacted=impacted,
+            endpoints=endpoints,
+            change_context={
+                "source": "quality_audit",
+                "instruction": "只修复审计指出的问题，严格保留未受影响语义和业务规则血缘。",
+                "feedback": feedback,
+            },
+            llm=llm,
+            allow_retire=False,
+            repair_attempts=2,
+        )
+    except Exception as exc:
+        record_operational_error(
+            root,
+            project,
+            component="quality_audit",
+            operation="targeted_case_repair",
+            error=exc,
+            detail={"impacted_case_ids": sorted(impacted_ids)},
+        )
+        return None, ""
+    updated_by_id = {case.id: case for case in result.updated}
+    if set(updated_by_id) != impacted_ids:
+        return None, ""
+    repaired = [updated_by_id.get(case.id, case) for case in cases]
+    return repaired, f"仅定向修订 {len(impacted_ids)} 条审计命中的用例，保留其余 {len(cases) - len(impacted_ids)} 条"
+
+
+def ensure_trusted_contract_for_generation(
+    root: Path,
+    project: str,
+    endpoints: list[Endpoint],
+    *,
+    stream_callback: Callable[[str], None] | None = None,
+) -> tuple[list[Endpoint], str]:
+    """Route an incomplete downstream input back through interface recognition.
+
+    The case-generation roles never receive the source snapshot. Only this
+    orchestration boundary invokes the interface-recognition pipeline, then
+    replaces the downstream input with its newly audited artifact.
+    """
+    from ai_apitest.application.discovery import normalize_document_for_agent
+    from ai_apitest.context.dependencies import synchronize_project_dependencies
+    from ai_apitest.core.paths import (
+        project_docs_file,
+        project_metadata_file,
+        project_source_snapshot_file,
+    )
+    from ai_apitest.core.serde import read_json, to_jsonable, write_json
+    from ai_apitest.discovery.document import parse_api_document
+    from ai_apitest.domain.contracts import (
+        TRUSTED_CONTRACT_VERSION,
+        contract_hash,
+        normalize_endpoint_contract,
+    )
+
+    normalized = [normalize_endpoint_contract(item) for item in endpoints]
+    metadata = read_json(project_metadata_file(root, project), {})
+    snapshot_path = project_source_snapshot_file(root, project)
+    snapshot = snapshot_path.read_text(encoding="utf-8") if snapshot_path.exists() else ""
+    issues: list[dict] = []
+    if snapshot and str(metadata.get("contract_status") or "") != "trusted_manual":
+        baseline, _source_metadata = parse_api_document(snapshot, source=str(metadata.get("source") or ""))
+        issues.extend(endpoint_catalog_gate_issues(normalized, baseline))
+    stored_hash = str(metadata.get("contract_hash") or "")
+    actual_hash = contract_hash(normalized)
+    if (
+        str(metadata.get("contract_version") or "") == TRUSTED_CONTRACT_VERSION
+        and stored_hash
+        and stored_hash != actual_hash
+    ):
+        issues.append(
+            {
+                "severity": "critical",
+                "location": "trusted_contract",
+                "reason": "接口契约内容哈希与已审计版本不一致。",
+            }
+        )
+    if not issues:
+        if (
+            str(metadata.get("contract_version") or "") != TRUSTED_CONTRACT_VERSION
+            or stored_hash != actual_hash
+        ):
+            metadata.update(
+                {
+                    "contract_version": TRUSTED_CONTRACT_VERSION,
+                    "contract_hash": actual_hash,
+                    "contract_status": metadata.get("contract_status") or "trusted_legacy",
+                    "business_rule_count": sum(len(item.business_rules) for item in normalized),
+                }
+            )
+            write_json(project_docs_file(root, project), to_jsonable(normalized))
+            write_json(project_metadata_file(root, project), metadata)
+        return normalized, ""
+
+    if not snapshot:
+        detail = "；".join(str(item.get("reason") or item) for item in issues[:10])
+        raise ValueError(
+            "接口识别产物不完整且没有可用于上游定向修订的接口文档快照；"
+            f"请先重新识别接口文档。{detail}"
+        )
+    if stream_callback:
+        stream_callback(
+            "用例生成预检发现上游接口识别产物缺陷，正在退回接口识别阶段定向修订并重新审计。\n"
+        )
+    baseline, source_metadata = parse_api_document(
+        snapshot,
+        source=str(metadata.get("source") or ""),
+    )
+    feedback = {
+        "instruction": "修复接口识别产物缺失，不生成测试用例。",
+        "issues": issues,
+    }
+    # apply_ai_discovery_if_configured owns source-document access and endpoint
+    # auditing. Passing feedback through metadata keeps the stage boundary
+    # explicit without exposing the source to downstream roles.
+    source_metadata["upstream_repair_feedback"] = feedback
+    repaired, repaired_metadata = apply_ai_discovery_if_configured(
+        root,
+        normalize_document_for_agent(snapshot),
+        baseline,
+        source_metadata,
+        stream_callback=stream_callback,
+        project=project,
+    )
+    if not repaired:
+        raise ValueError("接口识别阶段定向修订后仍没有可交付的可信接口契约")
+    repaired = [normalize_endpoint_contract(item) for item in repaired]
+    repaired_metadata.update(
+        {
+            "source": metadata.get("source", ""),
+            "source_name": metadata.get("source_name", ""),
+            "source_kind": metadata.get("source_kind", ""),
+            "upstream_repaired_for_case_generation": True,
+            "contract_version": TRUSTED_CONTRACT_VERSION,
+            "contract_hash": contract_hash(repaired),
+            "contract_status": repaired_metadata.get("contract_status") or "fallback",
+            "business_rule_count": sum(len(item.business_rules) for item in repaired),
+        }
+    )
+    write_json(project_docs_file(root, project), to_jsonable(repaired))
+    write_json(project_metadata_file(root, project), repaired_metadata)
+    synchronize_project_dependencies(
+        root,
+        project,
+        normalized,
+        repaired,
+        actor="orchestrator:upstream-contract-repair",
+    )
+    return repaired, "检测到接口识别产物缺陷，已在接口识别阶段定向修订并重新审计后继续生成"
+
+
+def _generate_cases_without_cache(
+    root: Path,
+    endpoints: list[Endpoint],
+    project: str = "default",
+    stream_callback: Callable[[str], None] | None = None,
+    llm_override: dict | None = None,
+    quality_feedback: dict | None = None,
+    quality_round: int = 1,
 ) -> tuple[list[TestCase], str]:
     llm = llm_override or configured_llm(root, "case_generator")
     if not is_llm_configured(llm):
         return generate_cases(endpoints), ""
-    strategy_context = case_generation_strategy_context(root)
     config = load_config(root)
+    generation_mode = str(config.get("agents", {}).get("case_generation_mode") or "agent").strip().lower()
+    if generation_mode == "agent":
+        from ai_apitest.application.case_generation import generate_cases_with_agent_runtime
+
+        return generate_cases_with_agent_runtime(
+            root,
+            endpoints,
+            project=project,
+            stream_callback=stream_callback,
+            llm_override=llm_override,
+            quality_feedback=quality_feedback,
+            quality_round=quality_round,
+            record_lessons=False,
+        )
+    if generation_mode != "legacy":
+        raise ValueError(f"不支持的用例生成模式：{generation_mode}；可选值为 agent 或 legacy")
+    strategy_context = case_generation_strategy_context(root, endpoints)
     context_block = ""
     try:
         context_block = build_context_bundle(
@@ -110,8 +967,14 @@ def generate_cases_with_config(
             system_prompt="", user_prompt_base="",
             endpoints=endpoints, environment=str(config.get("default_environment", "")),
         ).text
-    except Exception:
+    except Exception as exc:
+        record_operational_error(root, project, component="context", operation="build_case_generation_bundle", error=exc)
         context_block = ""
+    if quality_feedback:
+        context_block += (
+            "\n\n## 上一轮质量审计修订要求\n"
+            + json.dumps(quality_feedback, ensure_ascii=False, separators=(",", ":"), default=str)
+        )
     base_kwargs = dict(base_url=llm.get("base_url",""), model=llm.get("model",""),
                        api_key_env=llm.get("api_key_env",""), provider=llm.get("provider","openai-compatible"),
                        timeout=DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
@@ -135,6 +998,7 @@ def generate_cases_with_config(
             stream_callback=stream_callback, **base_kwargs,
         )
     except Exception as exc:
+        record_operational_error(root, project, component="case_generation", operation="coverage_plan", error=exc)
         return [], f"覆盖计划生成失败（模型 {llm.get('model','?')}）：{exc}。可检查 API 连通性或稍后重试。"
     if not plan:
         return [], "大模型未生成覆盖计划。请检查接口定义和生成策略配置。"
@@ -187,7 +1051,15 @@ def generate_cases_with_config(
                 context_block=context_block, existing_cases=all_cases,
                 dep_graph=dep_graph, stream_callback=stream_callback, **base_kwargs,
             )
-        except Exception:
+        except Exception as exc:
+            record_operational_error(
+                root,
+                project,
+                component="case_generation",
+                operation="generate_batch",
+                error=exc,
+                detail={"batch": bi + 1, "scenario_count": len(batch)},
+            )
             batch_cases, bw = [], ""
         # Only report scenario_id issues if they persist through retries
         if bw and "缺失" in bw:
@@ -219,7 +1091,15 @@ def generate_cases_with_config(
                 )
                 if rw and "缺失" not in rw:
                     diag_parts.append(f"补生成: {rw}")
-            except Exception:
+            except Exception as exc:
+                record_operational_error(
+                    root,
+                    project,
+                    component="case_generation",
+                    operation="retry_missing_scenarios",
+                    error=exc,
+                    detail={"batch": bi + 1, "attempt": retry_count, "missing": len(missing_items)},
+                )
                 retry_cases = []
             if retry_cases:
                 retry_cases = attach_cleanup_steps(attach_setup_steps(retry_cases, endpoints), endpoints)
@@ -237,13 +1117,10 @@ def generate_cases_with_config(
     if not all_cases:
         return [], "两阶段生成未产出有效用例。" + "; ".join(diag_parts)
 
-    # Record lessons
-    try:
-        record_case_generation_lessons(root, project, all_cases, actor="ai:case_generator")
-    except Exception:
-        pass
-    # Governance
-    if _governance_enabled(root):
+    # The common quality-audit wrapper records lessons only for the selected
+    # immutable candidate. Legacy governance remains a rollback-only option
+    # when the new artifact audit is explicitly disabled.
+    if _governance_enabled(root) and not _quality_audit_artifact_enabled(root, "test_cases"):
         revised = _govern_cases(root, project, all_cases, endpoints)
         if revised:
             all_cases = revised
@@ -297,8 +1174,8 @@ def generate_cases_with_config(
                     final_gaps = _detect_coverage_gaps(all_cases, endpoints)
                     final_missing = _verify_plan_scenario_coverage(plan, all_cases)
                     dm_mismatches = _detect_design_method_mismatch(plan, all_cases)
-            except Exception:
-                pass
+            except Exception as exc:
+                record_operational_error(root, project, component="case_generation", operation="targeted_acceptance_repair", error=exc)
 
     # Report diagnostics AFTER repair attempt (no stale warnings)
     if dm_mismatches:
@@ -329,6 +1206,120 @@ def generate_cases_with_config(
         warning += f"。{len(setup_issues)} 条用例 setup_steps 变量未被引用"
 
     return all_cases, warning
+
+
+def case_generation_fingerprint(
+    root: Path,
+    project: str,
+    endpoints: list[Endpoint],
+    config: dict,
+    llm: dict,
+) -> str:
+    from ai_apitest.application.quality_audit import unique_audit_models
+    from ai_apitest.core.paths import project_metadata_file
+    from ai_apitest.core.serde import read_json, to_jsonable
+
+    lesson_version: dict[str, object] = {"count": 0, "revision": 0, "updated_at": ""}
+    try:
+        with context_connection(root, project) as conn:
+            row = conn.execute(
+                """
+                select count(*) as count, coalesce(sum(revision), 0) as revision,
+                       coalesce(max(updated_at), '') as updated_at
+                from lessons where project = ? and lifecycle_status in ('active', 'reopened')
+                  and review_status = 'confirmed'
+                """,
+                (safe_project_name(project),),
+            ).fetchone()
+            if row:
+                lesson_version = dict(row)
+    except Exception:
+        pass
+    role_dir = Path(__file__).resolve().parents[1] / "agents" / "identities"
+    role_versions = {
+        name: hashlib.sha256((role_dir / name).read_bytes()).hexdigest()
+        for name in ("test_planner.yaml", "case_designer.yaml")
+    }
+    project_metadata = read_json(project_metadata_file(root, project), {})
+    graph = project_metadata.get("dependency_graph", {})
+    graph_edges = graph.get("edges", []) if isinstance(graph, dict) else []
+    semantic_graph = {
+        "edges": sorted(
+            [item for item in graph_edges if isinstance(item, dict)],
+            key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, default=str),
+        ),
+        "rule": graph.get("rule", "") if isinstance(graph, dict) else "",
+    }
+    generation_agent_keys = {
+        "case_generation_mode",
+        "planner_batch_endpoints",
+        "designer_batch_endpoints",
+        "designer_batch_scenarios",
+        "semantic_repair_attempts",
+        "history_max_chars",
+    }
+    payload = {
+        "pipeline_version": GENERATION_PIPELINE_VERSION,
+        "trusted_contract": {
+            "version": project_metadata.get("contract_version", ""),
+            "hash": project_metadata.get("contract_hash", ""),
+            "status": project_metadata.get("contract_status", ""),
+            "source_snapshot_sha256": project_metadata.get("source_snapshot_sha256", ""),
+        },
+        "endpoints": to_jsonable(endpoints),
+        "dependency_graph": semantic_graph,
+        "case_generation": config.get("case_generation", {}),
+        "agents": {key: value for key, value in config.get("agents", {}).items() if key in generation_agent_keys},
+        "quality_audit": config.get("quality_audit", {}),
+        "artifact_language": configured_artifact_language(config),
+        "audit_models": [
+            model.key
+            for model in unique_audit_models(config.get("llm", {}))
+        ],
+        "llm": {key: value for key, value in llm.items() if "key" not in key.lower()},
+        "lessons": lesson_version,
+        "roles": role_versions,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def load_generation_cache(
+    root: Path,
+    project: str,
+    fingerprint: str,
+    endpoints: list[Endpoint],
+) -> list[TestCase] | None:
+    from ai_apitest.core.paths import project_generation_cache
+    from ai_apitest.core.serde import case_from_dict, read_json
+
+    payload = read_json(project_generation_cache(root, project), {})
+    if not isinstance(payload, dict) or payload.get("fingerprint") != fingerprint:
+        return None
+    try:
+        cases = [case_from_dict(item) for item in payload.get("cases", []) if isinstance(item, dict)]
+    except Exception:
+        return None
+    if not cases or case_quality_gate_issues(cases, endpoints):
+        return None
+    return cases
+
+
+def save_generation_cache(root: Path, project: str, fingerprint: str, cases: list[TestCase]) -> None:
+    if not cases:
+        return
+    from datetime import datetime, timezone
+    from ai_apitest.core.paths import project_generation_cache
+    from ai_apitest.core.serde import to_jsonable, write_json
+
+    write_json(
+        project_generation_cache(root, project),
+        {
+            "fingerprint": fingerprint,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "cases": to_jsonable(cases),
+        },
+    )
 
 
 def detect_runnable_misclassification(
@@ -467,6 +1458,8 @@ def _fill_doc_based_gaps(plan: list[dict[str, Any]], endpoints: list[Endpoint]) 
     doc explicitly declares: error response codes, parameter constraints, or auth
     requirements. LLM-merged coverage (via coverage_tags) is respected.
     """
+    from ai_apitest.domain.coverage import can_construct_error_status, first_response_basis
+
     result = list(plan)
     covered_methods: dict[tuple[str, str], set[str]] = {}
     for p in result:
@@ -478,9 +1471,22 @@ def _fill_doc_based_gaps(plan: list[dict[str, Any]], endpoints: list[Endpoint]) 
         covered = covered_methods.get(key, set())
 
         # Documented error responses → need negative coverage
-        error_codes = [k for k in (ep.responses or {}) if isinstance(k, str) and k.isdigit() and int(k) >= 400]
+        error_codes = [
+            int(k)
+            for k in (ep.responses or {})
+            if isinstance(k, str) and k.isdigit() and int(k) >= 400 and can_construct_error_status(ep, int(k))
+        ]
         if error_codes and not (covered & {"status_code_coverage", "type_error", "path_parameter_error", "auth_error", "boundary_value"}):
-            result.append(_make_plan_item(ep, "status_code_coverage", "P1", f"文档声明错误响应 {error_codes[0]}", ["status_code_coverage"]))
+            result.append(
+                _make_plan_item(
+                    ep,
+                    "status_code_coverage",
+                    "P1",
+                    f"文档声明错误响应 {error_codes[0]}",
+                    ["status_code_coverage"],
+                    expected_basis=f"responses.{error_codes[0]}",
+                )
+            )
 
         # Parameter constraints → need boundary or equivalence
         for param in ep.parameters or []:
@@ -490,26 +1496,54 @@ def _fill_doc_based_gaps(plan: list[dict[str, Any]], endpoints: list[Endpoint]) 
                 any(k in schema for k in ("maxLength", "minLength", "maximum", "minimum", "enum"))
                 or any(kw in desc for kw in ("最长", "最短", "最大", "最小", "不超过", "至少", "字符", "长度"))
             )
-            if has_constraint and not (covered & {"boundary_value", "equivalence_class", "type_error"}):
-                result.append(_make_plan_item(ep, "boundary_value", "P1", f"参数 {param.get('name','')} 有文档约束", ["boundary_value"]))
+            boundary_basis = first_response_basis(ep, {400, 416, 422})
+            if has_constraint and boundary_basis and not (covered & {"boundary_value", "equivalence_class", "type_error"}):
+                result.append(
+                    _make_plan_item(
+                        ep,
+                        "boundary_value",
+                        "P1",
+                        f"参数 {param.get('name','')} 有文档约束",
+                        ["boundary_value"],
+                        expected_basis=boundary_basis,
+                    )
+                )
                 break
 
         # Auth declared → need auth_error (only if doc/params mention it)
         auth_hints = ("auth", "token", "api_key", "apikey", "bearer", "鉴权", "认证")
         ep_text = f"{ep.summary or ''} {ep.description or ''} {' '.join(p.get('name','')+p.get('description','') for p in (ep.parameters or []))}".lower()
-        if any(h in ep_text for h in auth_hints) and "auth_error" not in covered:
-            result.append(_make_plan_item(ep, "auth_error", "P1", "文档声明鉴权要求", ["auth_error"]))
+        auth_basis = first_response_basis(ep, {401, 403})
+        if auth_basis and (ep.security or any(h in ep_text for h in auth_hints)) and "auth_error" not in covered:
+            result.append(
+                _make_plan_item(
+                    ep,
+                    "auth_error",
+                    "P1",
+                    "文档声明鉴权要求",
+                    ["auth_error"],
+                    expected_basis=auth_basis,
+                )
+            )
 
     return result
 
 
-def _make_plan_item(ep: Endpoint, dm: str, priority: str, title_hint: str, tags: list[str]) -> dict[str, Any]:
+def _make_plan_item(
+    ep: Endpoint,
+    dm: str,
+    priority: str,
+    title_hint: str,
+    tags: list[str],
+    *,
+    expected_basis: str | None = None,
+) -> dict[str, Any]:
     sid_base = f"{ep.method}-{ep.path}".replace("/", "-").replace("{", "").replace("}", "").strip("-")[:50]
     return {
         "scenario_id": f"SCN-DOC-{dm.upper()}-{sid_base}",
         "endpoint_method": ep.method, "endpoint_path": ep.path,
         "design_method": dm, "priority": priority, "title_hint": title_hint,
-        "coverage_tags": tags, "expected_basis": None, "data_dependency": None,
+        "coverage_tags": tags, "expected_basis": expected_basis, "data_dependency": None,
         "chain_steps": None, "setup_required": False, "dependency_edge_ids": [],
         "expected_setup": [],
     }
@@ -521,6 +1555,8 @@ def _fill_hard_gaps(plan: list[dict[str, Any]], endpoints: list[Endpoint], *, de
     Prefers master-generated dep_graph when available (from API discovery metadata),
     falls back to local _build_dependency_graph heuristic.
     """
+    from ai_apitest.domain.coverage import first_response_basis
+
     result = list(plan)
     covered = {(p["endpoint_method"], p["endpoint_path"], p["design_method"]) for p in result}
     has_chain = any(p["endpoint_method"] == "CHAIN" and p.get("chain_steps") for p in result)
@@ -566,23 +1602,14 @@ def _fill_hard_gaps(plan: list[dict[str, Any]], endpoints: list[Endpoint], *, de
 
     # Path parameter error
     for ep in endpoints:
-        if "{" in ep.path and "}" in ep.path:
+        path_error_basis = first_response_basis(ep, {400, 404, 422})
+        if path_error_basis and "{" in ep.path and "}" in ep.path:
             if (ep.method, ep.path, "path_parameter_error") not in covered:
                 result.append({"scenario_id": f"SCN-HARD-PPE-{ep.method}-{ep.path.replace('/','-').strip('-')}",
                                "endpoint_method": ep.method, "endpoint_path": ep.path,
                                "design_method": "path_parameter_error", "priority": "P1",
                                "title_hint": f"{ep.path} 路径参数异常", "coverage_tags": ["path_parameter_error"],
-                               "expected_basis": None, "data_dependency": None, "chain_steps": None})
-
-    # Error response coverage
-    for ep in endpoints:
-        error_codes = [k for k in (ep.responses or {}) if isinstance(k, str) and k.isdigit() and int(k) >= 400]
-        if error_codes and (ep.method, ep.path, "type_error") not in covered:
-            result.append({"scenario_id": f"SCN-HARD-ERR-{ep.method}-{ep.path.replace('/','-').strip('-')}",
-                           "endpoint_method": ep.method, "endpoint_path": ep.path,
-                           "design_method": "type_error", "priority": "P1",
-                           "title_hint": f"{ep.path} 错误响应", "coverage_tags": ["type_error"],
-                           "expected_basis": None, "data_dependency": None, "chain_steps": None})
+                               "expected_basis": path_error_basis, "data_dependency": None, "chain_steps": None})
     return result
 
 
@@ -595,6 +1622,128 @@ def supplement_cases_with_config(
     scenario_text: str,
     max_cases: int = 5,
     stream_callback: Callable[[str], None] | None = None,
+    artifact_language: str | None = None,
+) -> tuple[list[TestCase], str]:
+    from ai_apitest.application.quality_audit import QualityAuditService
+    from ai_apitest.core.serde import case_from_dict, to_jsonable
+
+    config = load_config(root)
+    language = configured_artifact_language(config, artifact_language)
+    set_current_artifact_language(language)
+    scenario_text = scenario_text.strip()
+    if not scenario_text:
+        raise ValueError("补充场景说明不能为空")
+    llm = configured_llm(root, "case_generator")
+    if not is_llm_configured(llm):
+        return [], "用例生成模型未配置，无法补充生成用例"
+    audit_service = QualityAuditService(
+        root,
+        project,
+        "test_cases",
+        endpoints=endpoints,
+        metadata={"operation": "supplement", "requested_max_cases": max_cases},
+    )
+    feedback: dict | None = None
+    audit_retry_cases: list[TestCase] | None = None
+    warnings: list[str] = []
+    selected_round = None
+    for round_index in range(1, audit_service.policy.max_rounds + 1):
+        if audit_retry_cases is not None:
+            generated = audit_retry_cases
+            warnings.append(f"第 {round_index} 轮仅重试未完成的审计模型，复用上一轮补充候选")
+        else:
+            generated, warning = _supplement_cases_once(
+                root,
+                endpoints,
+                existing_cases,
+                project=project,
+                scenario_text=scenario_text,
+                max_cases=max_cases,
+                stream_callback=stream_callback,
+                quality_feedback=feedback,
+                quality_round=round_index,
+            )
+            if warning:
+                warnings.append(warning)
+        generated = localize_generated_cases(generated, language)
+        audit_round = audit_service.evaluate(
+            to_jsonable(generated),
+            evidence={
+                "user_request": scenario_text,
+                "endpoints": to_jsonable(endpoints),
+                "existing_cases": to_jsonable(existing_cases),
+            },
+            round_index=round_index,
+            hard_gate_issues=case_quality_gate_issues(generated, endpoints),
+            producer_model_key=model_config_key(llm),
+            stream_callback=stream_callback,
+        )
+        if audit_round.passed:
+            selected_round = audit_round
+            break
+        if audit_round.hard_gate_pass and not audit_round.audit_complete:
+            audit_retry_cases = generated
+            feedback = None
+        else:
+            audit_retry_cases = None
+            feedback = audit_round.repair_feedback()
+    if selected_round is None:
+        selected_round = audit_service.best_safe_round()
+    if selected_round is None:
+        audit_service.finalize(
+            None,
+            decision="preserve_existing_cases",
+            reason="三轮后没有安全补充用例，保留现有用例集。",
+        )
+        return [], "；".join([*warnings, "三轮质量审计后没有安全补充用例，现有用例未被修改"])
+    generated = [
+        case_from_dict(item)
+        for item in selected_round.artifact
+        if isinstance(item, dict)
+    ][:max_cases]
+    audit_service.finalize(
+        selected_round,
+        decision="accepted" if selected_round.passed else "highest_safe_candidate",
+        reason=(
+            "补充用例质量审计通过。"
+            if selected_round.passed
+            else "三轮未达阈值，交付最高分安全补充用例。"
+        ),
+    )
+    try:
+        record_case_generation_lessons(
+            root,
+            project,
+            generated,
+            actor="quality:selected_supplement_artifact",
+        )
+    except Exception as exc:
+        record_operational_error(
+            root,
+            project,
+            component="context",
+            operation="record_selected_supplement_lessons",
+            error=exc,
+        )
+    score = f"{selected_round.average_score:.2f}" if selected_round.average_score is not None else "-"
+    warnings.append(
+        f"补充用例质量审计{'通过' if selected_round.passed else '安全兜底'}："
+        f"第 {selected_round.round_index} 轮，平均分 {score}"
+    )
+    return generated, "；".join(dict.fromkeys(item for item in warnings if item))
+
+
+def _supplement_cases_once(
+    root: Path,
+    endpoints: list[Endpoint],
+    existing_cases: list[TestCase],
+    *,
+    project: str = "default",
+    scenario_text: str,
+    max_cases: int = 5,
+    stream_callback: Callable[[str], None] | None = None,
+    quality_feedback: dict | None = None,
+    quality_round: int = 1,
 ) -> tuple[list[TestCase], str]:
     scenario_text = scenario_text.strip()
     if not scenario_text:
@@ -602,8 +1751,26 @@ def supplement_cases_with_config(
     llm = configured_llm(root, "case_generator")
     if not is_llm_configured(llm):
         return [], "用例生成模型未配置，无法补充生成用例"
-    strategy_context = case_generation_strategy_context(root)
     config = load_config(root)
+    generation_mode = str(config.get("agents", {}).get("case_generation_mode") or "agent").strip().lower()
+    if generation_mode == "agent":
+        from ai_apitest.application.case_generation import supplement_cases_with_agent_runtime
+
+        return supplement_cases_with_agent_runtime(
+            root,
+            endpoints,
+            existing_cases,
+            project=project,
+            scenario_text=scenario_text,
+            max_cases=max_cases,
+            stream_callback=stream_callback,
+            quality_feedback=quality_feedback,
+            quality_round=quality_round,
+            record_lessons=False,
+        )
+    if generation_mode != "legacy":
+        raise ValueError(f"不支持的用例生成模式：{generation_mode}；可选值为 agent 或 legacy")
+    strategy_context = case_generation_strategy_context(root, endpoints)
     context_block = ""
     try:
         context_block = build_context_bundle(
@@ -617,8 +1784,14 @@ def supplement_cases_with_config(
             endpoints=endpoints,
             environment=str(config.get("default_environment", "")),
         ).text
-    except Exception:
+    except Exception as exc:
+        record_operational_error(root, project, component="context", operation="build_supplement_bundle", error=exc)
         context_block = ""
+    if quality_feedback:
+        context_block += (
+            "\n\n## 上一轮质量审计修订要求\n"
+            + json.dumps(quality_feedback, ensure_ascii=False, separators=(",", ":"), default=str)
+        )
     try:
         generated = generate_supplemental_cases_with_llm(  # supplemental raises on failure, no repair needed here
             endpoints=endpoints,
@@ -642,12 +1815,7 @@ def supplement_cases_with_config(
     generated = attach_cleanup_steps(attach_setup_steps(generated, endpoints), endpoints)
     if not generated:
         return [], "大模型生成的补充用例与现有用例重复，未追加"
-    try:
-        record_case_generation_lessons(root, project, generated, actor="ai:case_generator")
-    except Exception:
-        pass
-    # ── Master governance: review supplemental cases ──
-    if _governance_enabled(root):
+    if _governance_enabled(root) and not _quality_audit_artifact_enabled(root, "test_cases"):
         _govern_cases(root, project, generated, endpoints)
     return generated[:max_cases], ""
 
@@ -1018,53 +2186,525 @@ def normalize_text(value: str) -> str:
     return " ".join(str(value or "").strip().lower().split())
 
 
-def build_ai_report_analysis(root: Path, project: str, results: list[CaseResult]) -> str:
+def analysis_artifact_from_text(value: str) -> dict[str, object]:
+    import re
+
+    from ai_apitest.context.extraction import strip_context_blocks
+
+    def block(name: str) -> list[dict]:
+        match = re.search(
+            rf"```{re.escape(name)}\s*(.*?)\s*```",
+            str(value or ""),
+            flags=re.S,
+        )
+        if not match:
+            return []
+        try:
+            parsed = json.loads(match.group(1))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+
+    return {
+        "markdown": strip_context_blocks(str(value or "")).strip(),
+        "lessons": block("iatest-lessons-json"),
+        "known_issue_updates": block("iatest-known-issues-json"),
+    }
+
+
+def report_quality_gate_issues(
+    markdown: str,
+    results: list[CaseResult],
+    documented_endpoints: list[Endpoint] | None = None,
+    artifact_language: str | None = None,
+) -> list[dict]:
+    headings = analysis_headings(
+        artifact_language
+        or detect_analysis_language(markdown)
+    )
+    required = tuple(
+        f"### {headings[key]}"
+        for key in (
+            "one_line_conclusion",
+            "result_overview",
+            "main_issues",
+            "recommended_actions",
+            "notes",
+        )
+    )
+    issues: list[dict] = []
+    for heading in required:
+        if heading not in markdown:
+            issues.append(
+                {
+                    "severity": "high",
+                    "dimension": "completeness",
+                    "location": heading,
+                    "evidence": "报告输出契约要求包含该固定章节。",
+                    "reason": "报告缺少必需章节。",
+                    "suggested_fix": f"补充 {heading}，内容必须引用执行事实。",
+                }
+            )
+    failure_review_heading = f"### {headings['failure_review']}"
+    if any(item.status == "failed" for item in results) and failure_review_heading not in markdown:
+        issues.append(
+            {
+                "severity": "critical",
+                "dimension": "completeness",
+                "location": failure_review_heading,
+                "evidence": "本次执行存在 failed 用例。",
+                "reason": "存在失败时报告必须给出基于证据的失败复核。",
+                "suggested_fix": "按失败类别补充请求、响应和断言证据。",
+            }
+        )
+    from ai_apitest.application.result_analysis import result_rate_limit_wait_ms
+
+    report_lines = markdown.splitlines()
+    for result in results:
+        wait_ms = result_rate_limit_wait_ms(result)
+        if wait_ms < 1000 or wait_ms * 2 < result.elapsed_ms:
+            continue
+        misleading_lines = [
+            line
+            for line in report_lines
+            if result.case_id in line
+            and any(term in line for term in ("性能最慢", "性能瓶颈", "性能风险", "监控性能"))
+            and not any(term in line for term in ("限流", "框架等待", "主动等待"))
+        ]
+        if misleading_lines:
+            issues.append(
+                {
+                    "severity": "high",
+                    "dimension": "reliability",
+                    "location": result.case_id,
+                    "evidence": (
+                        f"该用例总耗时 {result.elapsed_ms}ms，其中框架主动限流等待 {wait_ms}ms；"
+                        f"报告写为：{misleading_lines[0][:300]}"
+                    ),
+                    "reason": "把框架主动限流等待误写成接口性能风险。",
+                    "suggested_fix": "显式拆分限流等待与实际执行耗时，并移除无证据的服务端性能结论。",
+                }
+            )
+    endpoint_map = {
+        (endpoint.method.upper(), endpoint.path): endpoint
+        for endpoint in documented_endpoints or []
+    }
+    for result in results:
+        if result.status != "failed":
+            continue
+        endpoint = endpoint_map.get((result.method.upper(), result.path))
+        basis = documented_assertion_basis(result, endpoint)
+        if not basis:
+            continue
+        misleading_lines = [
+            line
+            for line in report_lines
+            if result.case_id in line
+            and any(term in line for term in ("调整断言", "更新断言", "断言问题", "用例预期问题"))
+            and not any(term in line for term in ("不是断言问题", "非断言问题", "不得调整断言"))
+        ]
+        if misleading_lines:
+            issues.append(
+                {
+                    "severity": "high",
+                    "dimension": "reliability",
+                    "location": result.case_id,
+                    "evidence": basis,
+                    "reason": "失败断言有可信文档契约依据，不能直接归因为用例断言错误。",
+                    "suggested_fix": "归因为接口实现与文档契约不一致；建议先确认应修实现还是修文档。",
+                }
+            )
+    return issues
+
+
+def documented_assertion_basis(result: CaseResult, endpoint: Endpoint | None) -> str:
+    if endpoint is None or not result.assertion_errors:
+        return ""
+    failure_text = "\n".join(result.assertion_errors)
+    for rule in endpoint.business_rules:
+        if not isinstance(rule, dict):
+            continue
+        rule_text = str(rule.get("title") or rule.get("description") or "").strip()
+        if rule_text and rule_text not in result.title:
+            continue
+        expected = rule.get("expected")
+        assertions = expected.get("assertions") if isinstance(expected, dict) else None
+        for assertion in assertions if isinstance(assertions, list) else []:
+            if not isinstance(assertion, dict):
+                continue
+            expected_value = assertion.get("expected")
+            if isinstance(expected_value, str) and expected_value and expected_value in failure_text:
+                source = str(rule.get("source_evidence") or rule_text).strip()
+                return (
+                    f"文档规则 {rule.get('rule_id') or '<unknown>'} 明确预期 {expected_value!r}"
+                    + (f"；原文证据：{source}" if source else "")
+                )
+    return ""
+
+
+def experience_quality_gate_issues(value: dict[str, object]) -> list[dict]:
+    lessons = value.get("lessons")
+    updates = value.get("known_issue_updates")
+    issues: list[dict] = []
+    if not isinstance(lessons, list) or not isinstance(updates, list):
+        return [
+            {
+                "severity": "critical",
+                "dimension": "reliability",
+                "location": "经验候选结构",
+                "evidence": "经验输出契约要求 lessons 和 known_issue_updates 均为数组。",
+                "reason": "经验候选结构无效。",
+                "suggested_fix": "重新提交结构化经验数组。",
+            }
+        ]
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(lessons):
+        if not isinstance(item, dict) or not str(item.get("title") or "").strip() or not str(item.get("content") or "").strip():
+            issues.append(
+                {
+                    "severity": "high",
+                    "dimension": "completeness",
+                    "location": f"lessons[{index}]",
+                    "evidence": "经验候选必须同时包含 title 和 content。",
+                    "reason": "经验候选缺少必要内容。",
+                    "suggested_fix": "补齐可追溯标题和事实内容，无法补齐则删除该候选。",
+                }
+            )
+            continue
+        key = (
+            str(item.get("title") or "").strip(),
+            str(item.get("content") or "").strip(),
+        )
+        if key in seen:
+            issues.append(
+                {
+                    "severity": "high",
+                    "dimension": "non_redundancy",
+                    "location": f"lessons[{index}]",
+                    "evidence": "同一批经验存在完全相同的标题和内容。",
+                    "reason": "经验候选重复。",
+                    "suggested_fix": "删除重复候选。",
+                }
+            )
+        seen.add(key)
+    return issues
+
+
+def build_ai_report_analysis(
+    root: Path,
+    project: str,
+    results: list[CaseResult],
+    *,
+    artifact_language: str | None = None,
+) -> str:
     llm = configured_llm(root, "analyzer")
     if not is_llm_configured(llm):
         return ""
-    context_block = ""
     config = load_config(root)
-    try:
-        context_block = build_context_bundle(
-            root,
-            project,
-            task_type="report_analysis",
-            model_config=llm,
-            context_config=config.get("context", {}),
-            system_prompt="",
-            user_prompt_base=report_analysis_user_prompt_base(root, project, results),
-            endpoints=endpoints_from_results(results),
-            environment=str(config.get("default_environment", "")),
-        ).text
-    except Exception:
-        context_block = ""
-
-    # Extract trend context for AI analysis (same data powers the web trend view)
+    language = configured_artifact_language(config, artifact_language)
+    set_current_artifact_language(language)
     trend_ctx = _build_trend_context(root, project)
+    analysis_mode = str(config.get("agents", {}).get("report_analysis_mode") or "agent").strip().lower()
+    from ai_apitest.application.quality_audit import QualityAuditService
+    from ai_apitest.application.result_analysis import (
+        documented_contract_evidence,
+        documented_endpoints_for_results,
+        render_analysis_artifact,
+    )
+    from ai_apitest.core.serde import to_jsonable
+    from ai_apitest.report.markdown import render_report_markdown
+
+    documented_endpoints = documented_endpoints_for_results(root, project, results)
+    contract_evidence = documented_contract_evidence(results, documented_endpoints)
+    report_audit = QualityAuditService(
+        root,
+        project,
+        "test_report",
+        endpoints=documented_endpoints,
+        metadata={"result_count": len(results)},
+    )
+    experience_audit = QualityAuditService(
+        root,
+        project,
+        "experiences",
+        endpoints=documented_endpoints,
+        metadata={"source": "result_analysis", "result_count": len(results)},
+    )
+    report_selected = None
+    experience_selected = None
+    quality_feedback: dict | None = None
+    audit_retry_analysis: str | None = None
+    analysis_error: Exception | None = None
+    evidence = {
+        "execution_results": to_jsonable(results),
+        "documented_endpoint_contracts": contract_evidence,
+        "trend_context": trend_ctx,
+        "immutable_summary": {
+            "total": len(results),
+            "passed": sum(item.status == "passed" for item in results),
+            "failed": sum(item.status == "failed" for item in results),
+            "skipped": sum(item.status == "skipped" for item in results),
+        },
+    }
     try:
-        analysis = analyze_results_with_llm(results, project, llm, context_block=context_block, trend_context=trend_ctx)
+        for round_index in range(1, report_audit.policy.max_rounds + 1):
+            try:
+                if audit_retry_analysis is not None:
+                    analysis = audit_retry_analysis
+                elif analysis_mode == "agent":
+                    from ai_apitest.application.result_analysis import analyze_results_with_agent_runtime
+
+                    analysis = analyze_results_with_agent_runtime(
+                        root,
+                        project,
+                        results,
+                        llm,
+                        trend_context=trend_ctx,
+                        quality_feedback=quality_feedback,
+                        quality_round=round_index,
+                    )
+                elif analysis_mode == "legacy":
+                    context_block = ""
+                    try:
+                        context_block = build_context_bundle(
+                            root,
+                            project,
+                            task_type="report_analysis",
+                            model_config=llm,
+                            context_config=config.get("context", {}),
+                            system_prompt="",
+                            user_prompt_base=report_analysis_user_prompt_base(root, project, results),
+                            endpoints=documented_endpoints,
+                            environment=str(config.get("default_environment", "")),
+                        ).text
+                    except Exception as exc:
+                        record_operational_error(
+                            root,
+                            project,
+                            component="context",
+                            operation="build_report_bundle",
+                            error=exc,
+                        )
+                    if quality_feedback:
+                        context_block += (
+                            "\n\n## 上一轮质量审计修订要求\n"
+                            + json.dumps(
+                                quality_feedback,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                                default=str,
+                            )
+                        )
+                    analysis = analyze_results_with_llm(
+                        results,
+                        project,
+                        llm,
+                        context_block=context_block,
+                        trend_context=trend_ctx,
+                    )
+                else:
+                    raise ValueError(f"不支持的报告分析模式：{analysis_mode}")
+            except Exception as exc:
+                analysis_error = exc
+                record_operational_error(
+                    root,
+                    project,
+                    component="report_analysis",
+                    operation="produce_quality_round",
+                    error=exc,
+                    detail={"quality_round": round_index},
+                )
+                break
+            artifact = analysis_artifact_from_text(analysis)
+            full_report = render_report_markdown(
+                results,
+                project=project,
+                analysis=str(artifact["markdown"]),
+                artifact_language=language,
+            )
+            if report_selected is None:
+                report_round = report_audit.evaluate(
+                    {
+                        "analysis_markdown": artifact["markdown"],
+                        "full_report_markdown": full_report,
+                    },
+                    evidence=evidence,
+                    round_index=round_index,
+                    hard_gate_issues=report_quality_gate_issues(
+                        artifact["markdown"],
+                        results,
+                        documented_endpoints,
+                        language,
+                    ),
+                    producer_model_key=model_config_key(llm),
+                )
+                if report_round.passed:
+                    report_selected = report_round
+            else:
+                report_round = report_selected
+            experience_artifact = {
+                "lessons": artifact["lessons"],
+                "known_issue_updates": artifact["known_issue_updates"],
+            }
+            if experience_selected is None:
+                selected_report_artifact = (
+                    report_selected.artifact.get("analysis_markdown", "")
+                    if report_selected is not None and isinstance(report_selected.artifact, dict)
+                    else artifact["markdown"]
+                )
+                experience_round = experience_audit.evaluate(
+                    experience_artifact,
+                    evidence={
+                        **evidence,
+                        "selected_report_candidate": selected_report_artifact,
+                    },
+                    round_index=round_index,
+                    hard_gate_issues=experience_quality_gate_issues(experience_artifact),
+                    producer_model_key=model_config_key(llm),
+                )
+                if experience_round.passed:
+                    experience_selected = experience_round
+            else:
+                experience_round = experience_selected
+            if report_selected is not None and experience_selected is not None:
+                break
+            audit_incomplete = (
+                report_round.hard_gate_pass
+                and not report_round.audit_complete
+            ) or (
+                experience_round.hard_gate_pass
+                and not experience_round.audit_complete
+            )
+            if audit_incomplete:
+                audit_retry_analysis = analysis
+                quality_feedback = None
+            else:
+                audit_retry_analysis = None
+                quality_feedback = {}
+                if report_selected is None:
+                    quality_feedback["report"] = report_round.repair_feedback()
+                if experience_selected is None:
+                    quality_feedback["experiences"] = experience_round.repair_feedback()
+                quality_feedback = quality_feedback or None
+        if report_selected is None:
+            report_selected = report_audit.best_safe_round()
+        if experience_selected is None:
+            experience_selected = experience_audit.best_safe_round()
+        report_audit.finalize(
+            report_selected,
+            decision=(
+                "accepted"
+                if report_selected and report_selected.passed
+                else ("highest_safe_candidate" if report_selected else "factual_report_fallback")
+            ),
+            reason=(
+                "报告质量审计通过。"
+                if report_selected and report_selected.passed
+                else (
+                    (
+                        f"分析修订提前结束（{analysis_error}），选择最高分安全报告分析。"
+                        if analysis_error
+                        else "三轮未达阈值，选择最高分安全报告分析。"
+                    )
+                    if report_selected
+                    else "没有安全 AI 报告分析，仅交付框架事实报告。"
+                )
+            ),
+        )
+        experience_audit.finalize(
+            experience_selected,
+            decision=(
+                "accepted"
+                if experience_selected and experience_selected.passed
+                else ("pending_highest_safe" if experience_selected else "no_experience_persisted")
+            ),
+            reason=(
+                "经验候选质量审计通过。"
+                if experience_selected and experience_selected.passed
+                else (
+                    (
+                        f"分析修订提前结束（{analysis_error}），仅保留最高分安全经验为待人工确认。"
+                        if analysis_error
+                        else "三轮未达阈值，仅保留最高分安全经验为待人工确认。"
+                    )
+                    if experience_selected
+                    else "没有安全经验候选，不写入经验库。"
+                )
+            ),
+        )
+        if report_selected is None:
+            return ""
+        selected_experiences = (
+            experience_selected.artifact
+            if experience_selected is not None
+            else {"lessons": [], "known_issue_updates": []}
+        )
+        selected_analysis = render_analysis_artifact(
+            {
+                "markdown": str(
+                    report_selected.artifact.get("analysis_markdown", "")
+                    if isinstance(report_selected.artifact, dict)
+                    else report_selected.artifact
+                ),
+                "lessons": selected_experiences.get("lessons", []),
+                "known_issue_updates": selected_experiences.get("known_issue_updates", []),
+            }
+        )
         visible, _summary = process_report_analysis(
             root,
             project,
-            analysis,
+            selected_analysis,
             source=f"report_analysis:{project}",
             environment=str(config.get("default_environment", "")),
             llm=llm,
         )
-        # ── Master governance: review report analysis ──
-        review_context_conflicts(root, project)
-        if _governance_enabled(root):
-            _govern_report(root, project, results, analysis, visible)
-        if _governance_enabled(root):
-            _govern_experience_candidates(root, project)
+        # Governance is deliberately decoupled from the synchronous report
+        # path. One execution produces one analyzer call; conflict/candidate
+        # governance can be run explicitly, or opted back into inline mode.
+        if bool(config.get("governance", {}).get("inline_after_report", False)):
+            review_context_conflicts(root, project)
+            if (
+                _governance_enabled(root)
+                and not _quality_audit_artifact_enabled(root, "test_report")
+                and should_review_report(results, visible, language)
+            ):
+                _govern_report(root, project, results, analysis, visible)
+            if _governance_enabled(root):
+                _govern_experience_candidates(root, project)
         return visible
     except Exception as exc:
+        try:
+            if (report_audit.repository.get_session(report_audit.session_id) or {}).get("status") == "running":
+                report_audit.finalize(None, decision="failed", reason=str(exc))
+            if (experience_audit.repository.get_session(experience_audit.session_id) or {}).get("status") == "running":
+                experience_audit.finalize(None, decision="failed", reason=str(exc))
+        except Exception:
+            pass
+        record_operational_error(root, project, component="report_analysis", operation="analyze_results", error=exc)
         return f"大模型分析失败：{exc}"
+
+
+def build_ai_report_bundle(
+    root: Path,
+    project: str,
+    results: list[CaseResult],
+    *,
+    artifact_language: str | None = None,
+) -> tuple[str, str]:
+    """One analyzer run supplies both failure attribution and the full report."""
+    if not results:
+        return "", ""
+    return "", build_ai_report_analysis(
+        root,
+        project,
+        results,
+        artifact_language=artifact_language,
+    )
 
 
 def review_context_conflicts(root: Path, project: str) -> None:
     """Master model reviews and resolves context conflicts (governance: context_governance)."""
-    if not _governance_enabled(root):
+    if not _governance_feature_enabled(root, "review_experience_candidates"):
         return
     master = configured_llm(root, "master")
     if not is_llm_configured(master):
@@ -1073,13 +2713,34 @@ def review_context_conflicts(root: Path, project: str) -> None:
         conflicts = conflict_pairs(root, project, limit=20)
         if not conflicts:
             return
-        reviews = review_conflicts_with_llm(conflicts, master)
+        governance_mode = str(load_config(root).get("agents", {}).get("governance_mode") or "agent").strip().lower()
+        if governance_mode == "agent":
+            from ai_apitest.application.governance import review_conflicts_with_agent_runtime
+
+            reviews = review_conflicts_with_agent_runtime(
+                root,
+                project,
+                conflicts=conflicts,
+                llm=master,
+            )
+        elif governance_mode == "legacy":
+            reviews = review_conflicts_with_llm(conflicts, master)
+        else:
+            raise ValueError(f"不支持的治理模式：{governance_mode}")
         apply_conflict_review(root, project, reviews, actor="ai:master")
         _audit_governance(root, project, "conflict_reviewed", {
             "conflict_count": len(conflicts), "decisions": [r.get("decision", "") for r in reviews],
         }, task="context_governance")
-    except Exception:
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="review_context_conflicts", error=exc)
         return
+
+
+def run_pending_context_governance(root: Path, project: str) -> None:
+    """Explicitly process pending conflict and experience governance work."""
+    review_context_conflicts(root, project)
+    if _governance_enabled(root):
+        _govern_experience_candidates(root, project)
 
 
 def endpoints_from_results(results: list[CaseResult]) -> list[Endpoint]:
@@ -1127,7 +2788,8 @@ def _build_trend_context(root, project: str) -> dict:
             "endpoint_deltas": endpoint_deltas[:10],
             "note": comp["note"],
         }
-    except Exception:
+    except Exception as exc:
+        record_operational_error(root, project, component="trend", operation="build_analysis_context", error=exc)
         return {}
 
 
@@ -1157,11 +2819,21 @@ def report_analysis_user_prompt_base(root, project: str, results: list[CaseResul
         "results": [to_jsonable(item) for item in results],
         "trend_context": trend_context,
     }
+    from ai_apitest.core.artifact_language import output_language_instruction
+
+    headings = analysis_headings()
     return render_prompt(
         "result_analysis.md",
         {
             "CONTEXT_BLOCK": "",
             "RESULTS_JSON": json.dumps(payload, ensure_ascii=False, indent=2),
+            "OUTPUT_LANGUAGE_INSTRUCTION": output_language_instruction(),
+            "ONE_LINE_CONCLUSION": headings["one_line_conclusion"],
+            "RESULT_OVERVIEW": headings["result_overview"],
+            "MAIN_ISSUES": headings["main_issues"],
+            "RECOMMENDED_ACTIONS": headings["recommended_actions"],
+            "NOTES": headings["notes"],
+            "FAILURE_REVIEW": headings["failure_review"],
         },
     )
 
@@ -1173,9 +2845,45 @@ def build_ai_failure_review(root: Path, project: str, results: list[CaseResult])
     if not is_llm_configured(llm):
         return ""
     try:
-        return review_failed_results_with_llm(results, project, llm)
+        mode = str(load_config(root).get("agents", {}).get("report_analysis_mode") or "agent").strip().lower()
+        if mode == "agent":
+            from ai_apitest.application.result_analysis import review_failed_results_with_agent_runtime
+
+            return review_failed_results_with_agent_runtime(root, project, results, llm)
+        if mode == "legacy":
+            return review_failed_results_with_llm(results, project, llm)
+        raise ValueError(f"不支持的报告分析模式：{mode}")
     except Exception as exc:
         return f"AI 复核失败：{exc}"
+
+
+def should_review_report(
+    results: list[CaseResult],
+    visible_report: str,
+    artifact_language: str | None = None,
+) -> bool:
+    headings = analysis_headings(
+        artifact_language
+        or detect_analysis_language(visible_report)
+    )
+    required_sections = tuple(
+        f"### {headings[key]}"
+        for key in (
+            "one_line_conclusion",
+            "result_overview",
+            "main_issues",
+            "recommended_actions",
+            "notes",
+        )
+    )
+    if any(section not in visible_report for section in required_sections):
+        return True
+    if (
+        any(item.status == "failed" for item in results)
+        and f"### {headings['failure_review']}" not in visible_report
+    ):
+        return True
+    return False
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1184,16 +2892,32 @@ def build_ai_failure_review(root: Path, project: str, results: list[CaseResult])
 
 def _governance_enabled(root: Path) -> bool:
     config = load_config(root)
-    return bool(config.get("governance", {}).get("enabled", True))
+    governance = config.get("governance", {})
+    return bool(governance.get("enabled", True))
+
+
+def _quality_audit_artifact_enabled(root: Path, artifact_type: str) -> bool:
+    config = load_config(root).get("quality_audit", {})
+    return bool(config.get("enabled", True)) and bool(
+        config.get("artifacts", {}).get(artifact_type, True)
+    )
+
+
+def _governance_feature_enabled(root: Path, feature: str) -> bool:
+    if not _governance_enabled(root):
+        return False
+    governance = load_config(root).get("governance", {})
+    return bool(governance.get(feature, True))
 
 
 def _govern_report(root: Path, project: str, results: list[CaseResult], analysis_text: str, visible_report: str) -> None:
     """Master reviews analyzer's report for consistency, specificity, and misattribution (governance: report_review)."""
+    if not _governance_feature_enabled(root, "review_reports"):
+        return
     master = configured_llm(root, "master")
     if not is_llm_configured(master):
         return
     import json as _json
-    from ai_apitest.ai.provider import chat_completion
 
     total = len(results)
     passed = sum(1 for r in results if r.status == "passed")
@@ -1234,32 +2958,57 @@ def _govern_report(root: Path, project: str, results: list[CaseResult], analysis
 
 只输出 JSON，不要其他文字。"""
     try:
-        response = chat_completion(
-            base_url=master.get("base_url", ""), model=master.get("model", ""),
-            api_key_env=master.get("api_key_env", ""), provider=master.get("provider", "openai-compatible"),
-            messages=[{"role": "user", "content": prompt}],
-        ).strip()
-        parsed = _governance_parse_json(response, response_type="report_review", base_url=master.get("base_url",""), model=master.get("model",""), api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
+        governance_mode = str(load_config(root).get("agents", {}).get("governance_mode") or "agent").strip().lower()
+        if governance_mode == "agent":
+            from ai_apitest.application.governance import review_quality_with_agent_runtime
+
+            parsed = review_quality_with_agent_runtime(
+                root,
+                project,
+                review_type="report_review",
+                evidence={
+                    "summary": {"total": total, "passed": passed, "failed": failed, "pass_rate": rate_text},
+                    "failed_cases": failed_brief,
+                    "analysis": analysis_text[:5000],
+                    "visible_report": visible_report[:5000],
+                },
+                endpoints=endpoints_from_results(results),
+                llm=master,
+            )
+        elif governance_mode == "legacy":
+            from ai_apitest.ai.provider import chat_completion
+
+            response = chat_completion(
+                base_url=master.get("base_url", ""), model=master.get("model", ""),
+                api_key_env=master.get("api_key_env", ""), provider=master.get("provider", "openai-compatible"),
+                messages=[{"role": "user", "content": prompt}],
+            ).strip()
+            parsed = _governance_parse_json(response, response_type="report_review", base_url=master.get("base_url",""), model=master.get("model",""), api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
+        else:
+            raise ValueError(f"不支持的治理模式：{governance_mode}")
         if parsed:
             _audit_governance(root, project, "report_reviewed", {
                 "verdict": parsed.get("verdict"), "confidence": parsed.get("confidence"),
                 "issue_count": len(parsed.get("issues", [])),
             }, task="report_review")
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="review_report", error=exc)
 
 
 def _govern_experience_candidates(root: Path, project: str) -> None:
     """Master reviews pending experience candidates for semantic quality (governance: context_governance)."""
+    if not _governance_feature_enabled(root, "review_experience_candidates"):
+        return
     master = configured_llm(root, "master")
     if not is_llm_configured(master):
         return
     import json as _json
-    from ai_apitest.ai.provider import chat_completion
     from ai_apitest.context.storage import list_lessons
 
     # Query recent pending candidates
-    candidates_raw = list_lessons(root, project, lifecycle_status="pending", limit=10)
+    governance = load_config(root).get("governance", {})
+    max_candidates = max(1, min(100, int(governance.get("max_candidates_per_batch", 10))))
+    candidates_raw = list_lessons(root, project, lifecycle_status="pending", limit=max_candidates)
     if not candidates_raw:
         return
     candidates = [{k: v for k, v in c.items() if k in ("id", "title", "content", "lesson_type", "confidence", "scope")}
@@ -1303,16 +3052,33 @@ def _govern_experience_candidates(root: Path, project: str) -> None:
 
 只输出 JSON，不要其他文字。"""
     try:
-        response = chat_completion(
-            base_url=master.get("base_url", ""), model=master.get("model", ""),
-            api_key_env=master.get("api_key_env", ""), provider=master.get("provider", "openai-compatible"),
-            messages=[{"role": "user", "content": prompt}],
-        ).strip()
-        parsed = _governance_parse_json(response, response_type="experience_governance", base_url=master.get("base_url",""), model=master.get("model",""), api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
-        if parsed:
-            for decision in parsed.get("decisions", []):
+        governance_mode = str(config.get("agents", {}).get("governance_mode") or "agent").strip().lower()
+        if governance_mode == "agent":
+            from ai_apitest.application.governance import govern_context_candidates_with_agent_runtime
+
+            decisions = govern_context_candidates_with_agent_runtime(
+                root,
+                project,
+                candidates=candidates,
+                existing=existing_brief,
+                llm=master,
+            )
+        elif governance_mode == "legacy":
+            from ai_apitest.ai.provider import chat_completion
+
+            response = chat_completion(
+                base_url=master.get("base_url", ""), model=master.get("model", ""),
+                api_key_env=master.get("api_key_env", ""), provider=master.get("provider", "openai-compatible"),
+                messages=[{"role": "user", "content": prompt}],
+            ).strip()
+            parsed = _governance_parse_json(response, response_type="experience_governance", base_url=master.get("base_url",""), model=master.get("model",""), api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
+            decisions = parsed.get("decisions", []) if parsed else []
+        else:
+            raise ValueError(f"不支持的治理模式：{governance_mode}")
+        if decisions:
+            for decision in decisions:
                 d_confidence = str(decision.get("confidence", "low"))
-                if d_confidence == "low":
+                if d_confidence == "low" and bool(governance.get("low_confidence_requires_manual", True)):
                     decision["decision"] = "needs_review"
                 d_type = decision.get("decision")
                 cid = decision.get("candidate_id", "")
@@ -1328,21 +3094,20 @@ def _govern_experience_candidates(root: Path, project: str) -> None:
                 elif d_type == "conflict" and tid:
                     _apply_conflict(root, project, cid, tid)
             _audit_governance(root, project, "experience_governed", {
-                "candidates_in": len(candidates), "decisions": parsed.get("decisions", []),
+                "candidates_in": len(candidates), "decisions": decisions,
             }, task="context_governance")
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="review_experience_candidates", error=exc)
 
 
 def _review_coverage_plan(root: Path, project: str, plan: list[dict[str, Any]], endpoints: list[Endpoint]) -> None:
     """Master reviews the coverage plan (lightweight, high-ROI)."""
-    if not _governance_enabled(root):
+    if not _governance_feature_enabled(root, "review_cases"):
         return
     master = configured_llm(root, "master")
     if not is_llm_configured(master):
         return
     import json as _json
-    from ai_apitest.ai.provider import chat_completion
 
     endpoint_briefs = [{"method": e.method, "path": e.path, "summary": e.summary or "",
                          "responses": {str(k): str(v) for k, v in (e.responses or {}).items()},
@@ -1368,36 +3133,53 @@ def _review_coverage_plan(root: Path, project: str, plan: list[dict[str, Any]], 
 ```json
 {{
   "verdict": "approved|needs_revision",
+  "confidence": "high|medium|low",
   "issues": [{{"scenario_id": "...", "severity": "error|warn", "detail": "..."}}],
   "suggestions": ["..."]
 }}
 ```
 只输出 JSON。"""
     try:
-        response = chat_completion(
-            base_url=master.get("base_url",""), model=master.get("model",""),
-            api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"),
-            messages=[{"role": "user", "content": prompt}],
-        ).strip()
-        parsed = _governance_parse_json(response, response_type="case_review",
-                                         base_url=master.get("base_url",""), model=master.get("model",""),
-                                         api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
+        governance_mode = str(load_config(root).get("agents", {}).get("governance_mode") or "agent").strip().lower()
+        if governance_mode == "agent":
+            from ai_apitest.application.governance import review_quality_with_agent_runtime
+
+            parsed = review_quality_with_agent_runtime(
+                root,
+                project,
+                review_type="coverage_plan_review",
+                evidence={"endpoints": endpoint_briefs, "plan": plan[:100]},
+                endpoints=endpoints,
+                llm=master,
+            )
+        elif governance_mode == "legacy":
+            from ai_apitest.ai.provider import chat_completion
+
+            response = chat_completion(
+                base_url=master.get("base_url",""), model=master.get("model",""),
+                api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"),
+                messages=[{"role": "user", "content": prompt}],
+            ).strip()
+            parsed = _governance_parse_json(response, response_type="case_review",
+                                             base_url=master.get("base_url",""), model=master.get("model",""),
+                                             api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
+        else:
+            raise ValueError(f"不支持的治理模式：{governance_mode}")
         if parsed:
             _audit_governance(root, project, "plan_reviewed", {"verdict": parsed.get("verdict"),
                 "issue_count": len(parsed.get("issues", [])), "plan_size": len(plan)}, task="plan_review")
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="review_coverage_plan", error=exc)
 
 
 def _govern_cases(root: Path, project: str, cases: list[TestCase], endpoints: list[Endpoint]) -> list[TestCase] | None:
     """Master tiered review of final TestCases. Returns revised cases if changes made, else None."""
-    if not _governance_enabled(root):
+    if not _governance_feature_enabled(root, "review_cases"):
         return None
     master = configured_llm(root, "master")
     if not is_llm_configured(master):
         return None
     import json as _json
-    from ai_apitest.ai.provider import chat_completion
 
     # Build lookup dict for case replacement; process reviews on mutable dict
     # Use scenario_id as primary key to avoid cross-batch ID collisions
@@ -1466,14 +3248,36 @@ def _govern_cases(root: Path, project: str, cases: list[TestCase], endpoints: li
 ```
 只输出 JSON。"""
         try:
-            response = chat_completion(
-                base_url=master.get("base_url", ""), model=master.get("model", ""),
-                api_key_env=master.get("api_key_env", ""), provider=master.get("provider", "openai-compatible"),
-                messages=[{"role": "user", "content": prompt}],
-            ).strip()
-            parsed = _governance_parse_json(response, response_type="case_review",
-                                             base_url=master.get("base_url",""), model=master.get("model",""),
-                                             api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
+            governance_mode = str(load_config(root).get("agents", {}).get("governance_mode") or "agent").strip().lower()
+            if governance_mode == "agent":
+                from ai_apitest.application.governance import review_quality_with_agent_runtime
+
+                parsed = review_quality_with_agent_runtime(
+                    root,
+                    project,
+                    review_type="case_review",
+                    evidence={
+                        "local_issues": local_issues[:20],
+                        "endpoints": endpoint_briefs,
+                        "cases": briefs,
+                        "batch": label,
+                    },
+                    endpoints=endpoints,
+                    llm=master,
+                )
+            elif governance_mode == "legacy":
+                from ai_apitest.ai.provider import chat_completion
+
+                response = chat_completion(
+                    base_url=master.get("base_url", ""), model=master.get("model", ""),
+                    api_key_env=master.get("api_key_env", ""), provider=master.get("provider", "openai-compatible"),
+                    messages=[{"role": "user", "content": prompt}],
+                ).strip()
+                parsed = _governance_parse_json(response, response_type="case_review",
+                                                 base_url=master.get("base_url",""), model=master.get("model",""),
+                                                 api_key_env=master.get("api_key_env",""), provider=master.get("provider","openai-compatible"))
+            else:
+                raise ValueError(f"不支持的治理模式：{governance_mode}")
             if parsed:
                 _audit_governance(root, project, "cases_reviewed", {
                     "verdict": parsed.get("verdict"), "confidence": parsed.get("confidence"),
@@ -1482,7 +3286,32 @@ def _govern_cases(root: Path, project: str, cases: list[TestCase], endpoints: li
                 if parsed.get("verdict") == "needs_revision" and parsed.get("issues"):
                     case_gen = configured_llm(root, "case_generator")
                     if is_llm_configured(case_gen):
-                        revised = _revise_cases(root, project, batch_cases, parsed.get("issues", []), endpoints, case_gen)
+                        issues = parsed.get("issues", [])
+                        if governance_mode == "agent":
+                            from ai_apitest.application.case_maintenance import maintain_cases_with_agent_runtime
+
+                            issue_ids = {
+                                str(item.get("case_id") or item.get("scenario_id") or "")
+                                for item in issues
+                                if isinstance(item, dict)
+                            }
+                            targets = [
+                                case
+                                for case in batch_cases
+                                if case.id in issue_ids or case.scenario_id in issue_ids
+                            ][:5]
+                            maintenance = maintain_cases_with_agent_runtime(
+                                root,
+                                project,
+                                impacted=targets,
+                                endpoints=endpoints,
+                                change_context={"quality_review_issues": issues},
+                                llm=case_gen,
+                                allow_retire=False,
+                            )
+                            revised = maintenance.updated
+                        else:
+                            revised = _revise_cases(root, project, batch_cases, issues, endpoints, case_gen)
                         if revised:
                             nonlocal changed
                             changed = True
@@ -1498,8 +3327,15 @@ def _govern_cases(root: Path, project: str, cases: list[TestCase], endpoints: li
                                         continue
                                 r_key = getattr(r, "scenario_id", "") or r.id
                                 case_by_key[r_key] = r
-        except Exception:
-            pass
+        except Exception as exc:
+            record_operational_error(
+                root,
+                project,
+                component="governance",
+                operation="review_case_batch",
+                error=exc,
+                detail={"batch": label, "case_count": len(batch_cases)},
+            )
 
     # Batch mandatory cases (10 per batch) — all reviewed, no cap
     BATCH_SIZE = 10
@@ -1524,8 +3360,8 @@ def _apply_merge(root: Path, project: str, candidate_id: str, target_id: str) ->
         with context_connection(root, safe) as conn:
             merge_lesson_into(conn, source_id=candidate_id, target_id=target_id, timestamp=now_iso(), actor="ai:master")
             audit(conn, "governance_merged", "lesson", candidate_id, safe, "ai:master", {"merged_into": target_id})
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="merge_candidate", error=exc)
 
 
 def _apply_reject(root: Path, project: str, candidate_id: str) -> None:
@@ -1542,8 +3378,8 @@ def _apply_reject(root: Path, project: str, candidate_id: str) -> None:
                 (candidate_id, safe),
             )
             audit(conn, "governance_rejected", "lesson", candidate_id, safe, "ai:master", {"reason": "governance review"})
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="reject_candidate", error=exc)
 
 
 def _apply_confirm(root: Path, project: str, candidate_id: str) -> None:
@@ -1560,8 +3396,8 @@ def _apply_confirm(root: Path, project: str, candidate_id: str) -> None:
                 (candidate_id, safe),
             )
             audit(conn, "governance_confirmed", "lesson", candidate_id, safe, "ai:master", {"reason": "governance approved"})
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="confirm_candidate", error=exc)
 
 
 def _apply_needs_review(root: Path, project: str, candidate_id: str) -> None:
@@ -1578,8 +3414,8 @@ def _apply_needs_review(root: Path, project: str, candidate_id: str) -> None:
                 (candidate_id, safe),
             )
             audit(conn, "governance_needs_review", "lesson", candidate_id, safe, "ai:master", {"reason": "low confidence or flagged by governance"})
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="mark_candidate_for_review", error=exc)
 
 
 def _apply_conflict(root: Path, project: str, candidate_id: str, target_id: str) -> None:
@@ -1602,8 +3438,8 @@ def _apply_conflict(root: Path, project: str, candidate_id: str, target_id: str)
                 (candidate_id, target_id, "governance detected conflict", now_iso()),
             )
             audit(conn, "governance_conflict_flagged", "lesson_relation", candidate_id, safe, "ai:master", {"conflict_with": target_id})
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="flag_candidate_conflict", error=exc)
 
 
 def _revise_cases(root: Path, project: str, cases: list[TestCase], issues: list[dict[str, Any]], endpoints: list[Endpoint], llm: dict) -> list[TestCase]:
@@ -1632,7 +3468,9 @@ def _revise_cases(root: Path, project: str, cases: list[TestCase], issues: list[
                      "severity": i.get("severity"), "detail": i.get("detail")}
                     for i in issues[:5]]
 
-    prompt = f"""以下测试用例经 master 审查发现问题，请根据 issue 修复这些问题并重新输出完整 JSON 数组。
+    prompt = f"""{output_language_instruction()}
+
+以下测试用例经 master 审查发现问题，请根据 issue 修复这些问题并重新输出完整 JSON 数组。
 
 ## 问题列表
 {_json.dumps(issues_brief, ensure_ascii=False, indent=2)}
@@ -1679,7 +3517,8 @@ def _revise_cases(root: Path, project: str, cases: list[TestCase], issues: list[
                 "revised_count": len(revised), "issue_count": len(issues_brief),
             }, task="case_review")
         return revised
-    except Exception:
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="revise_cases", error=exc)
         return []
 
 
@@ -1692,8 +3531,8 @@ def _audit_governance(root: Path, project: str, action: str, detail: dict, *, ta
         detail["timestamp"] = now_iso()
         with context_connection(root, safe) as conn:
             audit(conn, f"governance_{action}", "governance", "", safe, "ai:master", detail)
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="governance", operation="write_audit", error=exc)
 
 
 def _governance_parse_json(

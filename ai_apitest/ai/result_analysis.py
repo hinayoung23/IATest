@@ -4,6 +4,7 @@ import json
 
 from ai_apitest.ai.prompting import render_prompt
 from ai_apitest.ai.provider import chat_completion
+from ai_apitest.core.artifact_language import analysis_headings, output_language_instruction
 from ai_apitest.core.models import CaseResult
 from ai_apitest.core.serde import to_jsonable
 
@@ -28,6 +29,7 @@ def analyze_results_with_llm(results: list[CaseResult], project: str, llm: dict,
     }
     if trend_context:
         payload["trend_context"] = trend_context
+    headings = analysis_headings()
     return chat_completion(
         base_url=llm.get("base_url", ""),
         model=llm.get("model", ""),
@@ -41,6 +43,13 @@ def analyze_results_with_llm(results: list[CaseResult], project: str, llm: dict,
                     {
                         "CONTEXT_BLOCK": context_block.strip() or "## 项目历史上下文\n\n无可注入的已确认上下文。",
                         "RESULTS_JSON": json.dumps(payload, ensure_ascii=False, indent=2),
+                        "OUTPUT_LANGUAGE_INSTRUCTION": output_language_instruction(),
+                        "ONE_LINE_CONCLUSION": headings["one_line_conclusion"],
+                        "RESULT_OVERVIEW": headings["result_overview"],
+                        "MAIN_ISSUES": headings["main_issues"],
+                        "RECOMMENDED_ACTIONS": headings["recommended_actions"],
+                        "NOTES": headings["notes"],
+                        "FAILURE_REVIEW": headings["failure_review"],
                     },
                 ),
             }
@@ -65,7 +74,9 @@ def review_failed_results_with_llm(results: list[CaseResult], project: str, llm:
         messages=[
             {
                 "role": "user",
-                "content": render_prompt("result_review.md", {"FAILED_RESULTS_JSON": json.dumps(payload, ensure_ascii=False, indent=2)}),
+                "content": output_language_instruction()
+                + "\n\n"
+                + render_prompt("result_review.md", {"FAILED_RESULTS_JSON": json.dumps(payload, ensure_ascii=False, indent=2)}),
             }
         ],
     ).strip()

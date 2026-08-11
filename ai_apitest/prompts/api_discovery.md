@@ -12,7 +12,7 @@ responses 必须尽量完整保留接口文档中的成功响应、错误响应�
 - 如果文档写了业务结果但状态码仍是成功响应，例如“邮箱不存在或已过期”返回 {"valid": false}，必须作为 200 响应的 description/example/variants 保留下来。
 - 字段说明要放入 schema.properties.<field>.description。
 - 使用限制、参数约束、前置条件、幂等性、资源不存在、频率限制等业务规则要写入 description 或对应参数 schema.description。
-responses 没有明确说明时输出 {"200":{"description":"OK"}}。
+responses 没有明确说明时输出 {}，不得猜测状态码或响应字段。
 
 接口文档：
 

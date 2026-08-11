@@ -6,19 +6,27 @@ from ai_apitest.ai.case_generation import validate_cases
 from ai_apitest.ai.prompting import render_prompt
 from ai_apitest.ai.provider import chat_completion, extract_json_array, retry_with_json_repair
 from ai_apitest.core.models import Endpoint, TestCase
+from ai_apitest.core.artifact_language import output_language_instruction
 from ai_apitest.core.serde import to_jsonable
-from ai_apitest.orchestrator.maintainer.change_detector import endpoint_key
+from ai_apitest.orchestrator.maintainer.change_detector import diff_endpoints, endpoint_key
 
 
 def impacted_cases(cases: list[TestCase], changed_endpoint_keys: list[str]) -> list[TestCase]:
     changed = set(changed_endpoint_keys)
-    return [case for case in cases if f"{case.method.upper()} {case.path}" in changed or any(f"{step.method.upper()} {step.path}" in changed for step in case.steps)]
+    return [
+        case
+        for case in cases
+        if f"{case.method.upper()} {case.path}" in changed
+        or any(
+            f"{step.method.upper()} {step.path}" in changed
+            for step in [*case.setup_steps, *case.steps, *case.cleanup_steps]
+        )
+    ]
 
 
 def impacted_endpoint_keys(old: list[Endpoint], new: list[Endpoint]) -> list[str]:
-    old_keys = {endpoint_key(item) for item in old}
-    new_keys = {endpoint_key(item) for item in new}
-    return sorted(old_keys.symmetric_difference(new_keys))
+    changes = diff_endpoints(old, new)
+    return sorted({*changes["added"], *changes["removed"], *changes["changed"]})
 
 
 def auto_update_cases_with_llm(
@@ -38,7 +46,7 @@ def auto_update_cases_with_llm(
         messages=[
             {
                 "role": "user",
-                "content": render_prompt(
+                "content": output_language_instruction() + "\n\n" + render_prompt(
                     "case_maintenance.md",
                     {
                         "DIFF_JSON": json.dumps(diff, ensure_ascii=False, indent=2),

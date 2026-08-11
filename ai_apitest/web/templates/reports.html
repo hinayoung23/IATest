@@ -1,6 +1,12 @@
 <section>
   <div class="section-head"><h2>测试报告</h2><a class="button-link" href="{{DASHBOARD_URL}}">返回仪表盘</a></div>
-  <div class="table-wrap"><table><thead><tr><th>报告标题</th><th>计划执行时间</th><th>执行用例条数</th><th>成功率</th><th>详情</th><th>删除</th></tr></thead><tbody>{{ROWS}}</tbody></table></div>
+  {{MESSAGE}}
+  <form id="report-bulk-delete-form" method="post" action="/actions/delete-reports" class="bulk-actions" data-bulk-delete-form="reports" data-bulk-item-label="报告">
+    {{HIDDEN_PROJECT}}
+    <span data-bulk-selection-count="reports">当前页已选择 0 条</span>
+    <button type="submit" class="danger" data-bulk-delete-button="reports" disabled>批量删除</button>
+  </form>
+  <div class="table-wrap"><table><thead><tr><th class="select-cell"><input type="checkbox" data-bulk-select-all="reports" aria-label="选择当前页全部报告" title="选择当前页全部报告"></th><th>报告标题</th><th>计划执行时间</th><th>执行用例条数</th><th>成功率</th><th>详情</th><th>删除</th></tr></thead><tbody>{{ROWS}}</tbody></table></div>
   {{PAGER}}
 </section>
 {{TREND_SECTION}}

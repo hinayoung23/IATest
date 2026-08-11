@@ -1,16 +1,36 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ai_apitest.core.models import CaseResult
+from ai_apitest.core.artifact_language import (
+    artifact_text,
+    configured_artifact_language,
+    current_artifact_language,
+    normalize_artifact_language,
+    set_current_artifact_language,
+)
+from ai_apitest.core.config import load_config
+from ai_apitest.core.files import atomic_write_text
 from ai_apitest.core.paths import project_reports_dir, safe_project_name
 
 SENSITIVE_KEYS = ("authorization", "token", "api_key", "apikey", "secret", "password", "cookie")
 MAX_SNAPSHOT_CHARS = 12000
+REPORT_FILENAME_PATTERN = re.compile(r"report-\d{8}-\d{6}(?:-\d{6})?\.md")
+
+
+def report_filename(now: datetime) -> str:
+    return f"report-{now.strftime('%Y%m%d-%H%M%S-%f')}.md"
+
+
+def is_report_filename(name: str) -> bool:
+    """Accept current microsecond names and read-only legacy names."""
+    return bool(REPORT_FILENAME_PATTERN.fullmatch(str(name or "")))
 
 
 def write_report(
@@ -19,35 +39,68 @@ def write_report(
     project: str = "default",
     analysis: str = "",
     ai_review: str = "",
+    artifact_language: str | None = None,
 ) -> Path:
+    language = configured_artifact_language(load_config(root), artifact_language)
+    set_current_artifact_language(language)
     now = datetime.now()
-    report_path = project_reports_dir(root, project) / f"report-{now.strftime('%Y%m%d-%H%M%S')}.md"
+    report_path = project_reports_dir(root, project) / report_filename(now)
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        report_path,
+        render_report_markdown(
+            results,
+            project=project,
+            analysis=analysis,
+            ai_review=ai_review,
+            now=now,
+            artifact_language=language,
+        ),
+    )
+    prune_reports(root, project)
+    return report_path
+
+
+def render_report_markdown(
+    results: list[CaseResult],
+    *,
+    project: str = "default",
+    analysis: str = "",
+    ai_review: str = "",
+    now: datetime | None = None,
+    artifact_language: str | None = None,
+) -> str:
+    """Pure report renderer used by both quality audit and final persistence."""
+    now = now or datetime.now()
+    language = normalize_artifact_language(
+        artifact_language or current_artifact_language()
+    )
+    t = lambda key: artifact_text(key, language)
     passed = sum(1 for item in results if item.status == "passed")
     failed = sum(1 for item in results if item.status == "failed")
     skipped = sum(1 for item in results if item.status == "skipped")
     setup_failed = sum(1 for item in results if lifecycle_status(item.setup) in {"failed", "skipped"})
-    cleanup_failed = sum(1 for item in results if item.cleanup.get("status") == "failed")
-    cleanup_skipped = sum(1 for item in results if item.cleanup.get("status") == "skipped")
+    cleanup_failed = sum(1 for item in results if lifecycle_contains_status(item.cleanup, "failed"))
+    cleanup_skipped = sum(1 for item in results if lifecycle_contains_status(item.cleanup, "skipped"))
     total = len(results)
     lines = [
-        f"# {safe_project_name(project)} 测试执行报告 - {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"# {safe_project_name(project)} {t('test_execution_report')} - {now.strftime('%Y-%m-%d %H:%M:%S')}",
         "",
-        "## 总览",
+        f"## {t('overview')}",
         "",
-        "| 指标 | 值 |",
+        f"| {t('metric')} | {t('value')} |",
         "|------|-----|",
-        f"| 执行用例数 | {total} |",
-        f"| 通过 | {passed} |",
-        f"| 失败 | {failed} |",
-        f"| 跳过 | {skipped} |",
-        f"| 准备失败 | {setup_failed} |",
-        f"| 清理失败 | {cleanup_failed} |",
-        f"| 清理跳过 | {cleanup_skipped} |",
+        f"| {t('executed_cases')} | {total} |",
+        f"| {t('passed')} | {passed} |",
+        f"| {t('failed')} | {failed} |",
+        f"| {t('skipped')} | {skipped} |",
+        f"| {t('setup_failed')} | {setup_failed} |",
+        f"| {t('cleanup_failed')} | {cleanup_failed} |",
+        f"| {t('cleanup_skipped')} | {cleanup_skipped} |",
         "",
-        "## 明细",
+        f"## {t('details')}",
         "",
-        "| 用例 | 接口 | 状态 | 状态码 | 耗时 |",
+        f"| {t('case')} | {t('api')} | {t('status')} | {t('status_code')} | {t('duration')} |",
         "|------|------|------|--------|------|",
     ]
     for result in results:
@@ -57,44 +110,58 @@ def write_report(
         )
     failures = [item for item in results if item.status == "failed"]
     if failures:
-        lines.extend(["", "## 失败详情", ""])
+        lines.extend(["", f"## {t('failure_details')}", ""])
         for result in failures:
             lines.extend(
                 [
                     f"### {result.case_id} {result.title}",
                     "",
-                    f"- 接口：`{result.method} {result.path}`",
-                    f"- 设计方法：{result.design_method or '-'}",
-                    f"- 用例风险：{result.case_risk or '-'}",
-                    f"- 预期结果：{result.expected_result or '以断言列表为准'}",
-                    f"- 错误：{result.error or '断言失败'}",
-                    "- 归因提示：断言失败不一定代表接口缺陷，请结合下方前置条件、用例步骤和测试数据判断是否为测试数据或用例预期问题。",
+                    f"- {t('api')}: `{result.method} {result.path}`",
+                    f"- {t('design_method')}: {result.design_method or '-'}",
+                    f"- {t('risk')}: {result.case_risk or '-'}",
+                    f"- {t('expected_result')}: {result.expected_result or artifact_text('assertions_define_expected', language)}",
+                    f"- {t('error')}: {result.error or t('failed')}",
+                    f"- {t('attribution_hint')}: {t('failure_not_always_defect')}",
                 ]
             )
             if result.preconditions:
-                lines.append("- 前置条件：")
+                lines.append(f"- {t('preconditions')}:")
                 for item in result.preconditions:
                     lines.append(f"  - {item}")
             if result.test_steps:
-                lines.append("- 用例步骤：")
+                lines.append(f"- {t('case_steps')}:")
                 for index, item in enumerate(result.test_steps, start=1):
                     lines.append(f"  {index}. {item}")
             for error in result.assertion_errors:
-                lines.append(f"- 断言：{error}")
+                lines.append(f"- {t('assertions')}: {error}")
             lines.append("")
     if results:
-        lines.extend(["", "## 测试数据", "", "以下内容为本次执行时实际发出的请求、收到的响应和断言结果，用于判断失败是否由测试数据、断言规则或接口实现造成。", ""])
+        lines.extend(["", f"## {t('test_data')}", "", t('test_data_note'), ""])
         for result in results:
-            lines.extend(case_data_block(result))
+            lines.extend(case_data_block(result, artifact_language=language))
     if ai_review:
-        lines.extend(["", "## AI 失败复核", "", "> AI 复核仅用于辅助归因，不会覆盖自动化断言的原始执行结果。", "", ai_review.strip(), ""])
+        lines.extend(["", f"## {t('ai_failure_review')}", "", f"> {t('ai_review_note')}", "", ai_review.strip(), ""])
     if analysis:
-        lines.extend(["", "## AI 测试解读", "", analysis.strip(), ""])
-    report_path.write_text("\n".join(lines), encoding="utf-8")
-    return report_path
+        lines.extend(["", f"## {t('ai_test_analysis')}", "", analysis.strip(), ""])
+    return "\n".join(lines)
 
 
-def case_data_block(result: CaseResult) -> list[str]:
+def prune_reports(root: Path, project: str) -> None:
+    retain = max(10, int(load_config(root).get("retention", {}).get("reports", 200)))
+    reports = sorted(project_reports_dir(root, project).glob("report-*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for path in reports[retain:]:
+        path.unlink(missing_ok=True)
+
+
+def case_data_block(
+    result: CaseResult,
+    *,
+    artifact_language: str | None = None,
+) -> list[str]:
+    language = normalize_artifact_language(
+        artifact_language or current_artifact_language()
+    )
+    t = lambda key: artifact_text(key, language)
     status_code = result.status_code if result.status_code is not None else "-"
     summary = f"{result.case_id} {result.title}｜{result.status}｜{status_code}｜{result.elapsed_ms}ms"
     request_snapshot = normalize_snapshot(result.request)
@@ -114,31 +181,31 @@ def case_data_block(result: CaseResult) -> list[str]:
         "<details>",
         f"<summary>{summary}</summary>",
         "",
-        "#### 请求数据",
+        f"#### {t('request_data')}",
         "",
         "```json",
         format_snapshot(request_snapshot),
         "```",
         "",
-        "#### 前置准备结果",
+        f"#### {t('setup_result')}",
         "",
         "```json",
         format_snapshot(setup_snapshot or {"status": "not_configured"}),
         "```",
         "",
-        "#### 响应数据",
+        f"#### {t('response_data')}",
         "",
         "```json",
         format_snapshot(response_snapshot),
         "```",
         "",
-        "#### 清理结果",
+        f"#### {t('cleanup_result')}",
         "",
         "```json",
         format_snapshot(cleanup_snapshot or {"status": "not_configured"}),
         "```",
         "",
-        "#### 断言结果",
+        f"#### {t('assertion_results')}",
         "",
         "```json",
         format_snapshot(assertions),
@@ -152,9 +219,22 @@ def case_data_block(result: CaseResult) -> list[str]:
 def lifecycle_status(value: dict[str, Any]) -> str:
     if not value:
         return ""
+    if value.get("status"):
+        return str(value["status"])
     if "environment_setup" in value and isinstance(value["environment_setup"], dict):
         return str(value["environment_setup"].get("status", ""))
-    return str(value.get("status", ""))
+    for status in ("failed", "skipped", "passed", "not_needed"):
+        if lifecycle_contains_status(value, status):
+            return status
+    return ""
+
+
+def lifecycle_contains_status(value: Any, status: str) -> bool:
+    if isinstance(value, dict):
+        return value.get("status") == status or any(lifecycle_contains_status(item, status) for item in value.values())
+    if isinstance(value, list):
+        return any(lifecycle_contains_status(item, status) for item in value)
+    return False
 
 
 def normalize_snapshot(value: Any) -> Any:

@@ -1,5 +1,7 @@
 # AI 接口自动化框架 — 上下文系统设计方案（v2）
 
+> 交付状态（2026-07）：SQLite/FTS5 分页检索、万级候选预筛、严格确认/依赖验证门槛、ContextPack 自动保留与文件对账、操作错误审计均已落地。合法的旧版 pack JSON 会先回填数据库，缺失镜像会从数据库修复，避免升级时直接丢失审计历史。
+
 ## 一、设计目标
 
 框架作为通用产品，目标规模：
@@ -15,7 +17,7 @@
 
 核心原则：
 
-1. **上下文数据按项目物理隔离**：每个项目独立的 `context.db`，数据库文件路径为 `projects/<project>/.aitest/context.db`，与框架现有的 `results.sqlite3` 隔离模式一致。
+1. **上下文数据按项目物理隔离**：每个项目独立的 `context.db`，数据库文件路径为 `projects/<project>/.iatest/context.db`，与框架现有的 `results.sqlite3` 隔离模式一致。
 2. **AI 提取的所有内容默认 lifecycle_status=pending，人工确认后才能变为 active。**
 3. **只有经过执行验证的事实才能进入 verification_status=verified。**
 4. **SQLite 为主运行时存储，JSONL 为导入/导出/审计备份格式。**
@@ -30,19 +32,19 @@
 
 ### 2.1 项目隔离
 
-框架已有按项目隔离的存储模式（执行结果 `projects/<project>/.aitest/results.sqlite3`）。上下文系统遵循相同模式，**每个项目拥有独立的上下文数据库**：
+框架已有按项目隔离的存储模式（执行结果 `projects/<project>/.iatest/results.sqlite3`）。上下文系统遵循相同模式，**每个项目拥有独立的上下文数据库**：
 
 ```
 projects/
-  tempbox/
-    .aitest/
+  sample-api/
+    .iatest/
       results.sqlite3       # 现有的执行结果存储
       context.db            # 项目独立的上下文数据库
     context/
       exports/              # JSONL 导出
       packs/                # ContextPack 审计快照
   another-project/
-    .aitest/
+    .iatest/
       context.db            # 完全隔离，互不影响
     context/
       ...
@@ -66,7 +68,7 @@ projects/
                        │
 ┌──────────────────────▼──────────────────────────┐
 │     主存储 SQLite (per-project, 项目隔离)          │
-│     projects/<project>/.aitest/context.db        │
+│     projects/<project>/.iatest/context.db        │
 │                                                  │
 │  lessons              lesson_relations           │
 │  lesson_sources       context_packs              │
@@ -178,8 +180,13 @@ CREATE INDEX idx_lessons_tags ON lessons(tags);
 
 -- 全文搜索（FTS5）
 CREATE VIRTUAL TABLE lessons_fts USING fts5(
-    title, content, content=lessons, content_rowid=rowid
+    id UNINDEXED,
+    title,
+    content
 );
+
+-- lessons 的 insert/update/delete 触发器同步 FTS5；
+-- `iatest context rebuild-index` 可执行全量重建和审计。
 
 -- 注：lesson_relations、lesson_sources 通过 FK(lesson_id) 关联 lessons 表，
 --     项目隔离由 lessons.project 保证，这两张表不重复存储 project 字段。
@@ -320,7 +327,7 @@ CREATE TABLE schema_version (
 ### 2.3 Schema Version & Migration
 
 ```yaml
-# aitest.yaml 新增
+# iatest.yaml 新增
 context:
   schema_version: 2
   auto_migrate: true           # 启动时自动执行未应用的 migration
@@ -330,11 +337,11 @@ context:
 CLI 命令：
 
 ```bash
-aitest context migrate          # 执行待应用的 migration
-aitest context validate         # 校验 lessons 完整性
-aitest context export           # 导出当前项目 lessons 为 JSONL
-aitest context import <file>    # 从 JSONL 导入（合并模式，检查去重）
-aitest context rebuild-index    # 从 JSONL 重建 SQLite 数据库
+iatest context migrate          # 执行待应用的 migration
+iatest context validate         # 校验 lessons 完整性
+iatest context export           # 导出当前项目 lessons 为 JSONL
+iatest context import <file>    # 从 JSONL 导入（合并模式，检查去重）
+iatest context rebuild-index    # 从 JSONL 重建 SQLite 数据库
 ```
 
 每条 lesson 记录 `schema_version` 和 `revision`。migration 脚本按版本号顺序执行，升级旧字段、补充新字段默认值。
@@ -538,7 +545,10 @@ def calculate_injection_budget(model_config: dict, task_type: str, system_prompt
     }
 
     context_window = model_config.get("context_window", 128000)
-    reserve_output = model_config.get("default_output_tokens", 8000)
+    reserve_output = task_budget.get(
+        "reserve_output_tokens",
+        model_config.get("default_output_tokens", 8000),
+    )
     safety_margin = 1000  # 计入 tokenizer 误差
 
     # 系统 prompt + 基础 user prompt 的 token 估算
@@ -617,6 +627,33 @@ environment 为空的 lesson → 通用约束（默认适用）
 不同 environment 的 lesson → 参考（仅供参考，标注差异）
 ```
 
+### 5.6 Agent 任务内记忆与自动恢复
+
+经验库注入解决“跨任务应该记住什么”，Agent 任务记忆解决“同一任务进行到哪里”。两者不能混成不断增长的
+消息历史。单次 Agent 运行维护以下状态：
+
+| 状态 | Prompt 中的表示 | 持久化位置 |
+|---|---|---|
+| 原始任务目标 | 短任务保留全文，长任务保留首尾、哈希和证据 ID | `agent_evidence` |
+| 已完成动作 | 工具名、脱敏参数摘要、状态、调用签名 | 检查点 + `agent_tool_calls` |
+| 完整工具结果 | 只放摘要、哈希和证据 ID | `agent_evidence` |
+| 领域运行状态 | 去除内部字段并限深、限长的 JSON | `agent_checkpoints` |
+| 下一步动作 | 基于最近工具结果确定的短指令 | `agent_checkpoints` |
+
+安全输入容量按 `context_window - default_output_tokens - safety_margin_tokens` 计算。默认策略为：
+
+1. 达到 55%：压缩较早的 assistant/tool 文本，不动身份、任务目标和最近轮次。
+2. 达到 70%：保存检查点，自动将上下文重建为原 System 身份和一条结构化 User 检查点。
+3. 重建目标为 35%；状态仍过大时继续收缩检查点，不删除证据原文。
+4. 重建后达到 80%、累计重建 3 次或总 Token 预算耗尽时熔断。
+
+重建属于同一个运行，累计 Token、轮次、工具次数和角色预算全部延续。成功的幂等副作用工具按
+`tool_name + canonical_arguments` 签名去重，避免模型在恢复后重复提交。模型确需原始内容时，通过只读
+`read_task_evidence(evidence_id, offset, max_chars)` 分页读取；工具只能访问当前运行的证据。
+
+因此首次超过 80% 不需要人工清理上下文：Runtime 会先自动检查点化和重建。只有重建后仍超过熔断线、
+任务自身的身份/工具定义过大、总预算不足或连续恢复次数耗尽时，才需要人工缩小任务范围或调整模型配置。
+
 ---
 
 ## 六、提取时机与闭环
@@ -637,10 +674,10 @@ environment 为空的 lesson → 通用约束（默认适用）
 ```
 ## 上下文提取要求
 
-分析完成后，在响应末尾以 ```aitest-lessons-json 代码块输出本次提取的经验。
+分析完成后，在响应末尾以 ```iatest-lessons-json 代码块输出本次提取的经验。
 
 每条经验包含：scope, method, path, lesson_type, title, content, confidence, tags, environment
-已有已知问题的状态更新以 ```aitest-known-issues-json 输出。
+已有已知问题的状态更新以 ```iatest-known-issues-json 输出。
 ```
 
 ### 6.3 失败处理
@@ -653,7 +690,7 @@ environment 为空的 lesson → 通用约束（默认适用）
   "trigger": "report_analysis",
   "source": "report-20260617-101200.md",
   "status": "failed",
-  "error": "LLM 响应中没有找到 aitest-lessons-json 代码块",
+  "error": "LLM 响应中没有找到 iatest-lessons-json 代码块",
   "max_retries": 3,
   "retry_count": 1,
   "retry_backoff": "exponential",
@@ -704,9 +741,9 @@ pending ──人工确认──→ active ──不再复现──→ resolved_
 ```json
 {
   "id": "pack-20260617-a1b2c3",
-  "task_id": "case-generation-tempbox-20260617",
+  "task_id": "case-generation-sample-api-20260617",
   "task_type": "case_generation",
-  "project": "tempbox",
+  "project": "sample-api",
   "model": "kimi-k2.6",
   "model_context_window": 128000,
   "context_budget": 12000,
@@ -945,7 +982,7 @@ def compute_trend_direction(pattern: dict, recent_results: list) -> str:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ 项目上下文 / 趋势分析                      [project: tempbox] │
+│ 项目上下文 / 趋势分析                   [project: sample-api] │
 ├──────────────────────────────────────────────────────────────┤
 │ [经验库] [趋势分析] [审计日志]                                │
 │                                                              │
@@ -992,7 +1029,7 @@ def compute_trend_direction(pattern: dict, recent_results: list) -> str:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ 项目上下文 / 经验库                      [project: tempbox]   │
+│ 项目上下文 / 经验库                    [project: sample-api]  │
 │                                                              │
 │ 健康概览: 待确认 5 · 冲突 2 · 待复核 3 · 近7天新增 12        │
 ├──────────────────────────────────────────────────────────────┤
@@ -1053,11 +1090,11 @@ def compute_trend_direction(pattern: dict, recent_results: list) -> str:
 - [ ] Lesson CRUD（含三态拆分字段）
 - [ ] lesson_relations / lesson_sources / extraction_jobs / audit_logs 表
 - [ ] 内存索引构建（启动时从 SQLite 加载）
-- [ ] JSONL 导出/导入（`aitest context export/import`）
+- [ ] JSONL 导出/导入（`iatest context export/import`）
 
 ### Phase 2：报告分析自动提取（约 2 天）
 - [ ] 修改 `result_analysis.md` prompt，增加结构化 lessons 输出
-- [ ] 解析 `aitest-lessons-json` 代码块
+- [ ] 解析 `iatest-lessons-json` 代码块
 - [ ] Lesson 入库 + 去重检查 + 冲突检测
 - [ ] 已知问题自动更新（复现 / resolved_candidate）
 - [ ] 提取失败写入 extraction_jobs + 后台重试
@@ -1087,7 +1124,7 @@ def compute_trend_direction(pattern: dict, recent_results: list) -> str:
 - [ ] failure_patterns 增量更新逻辑 + trend_direction 计算
 - [ ] 报告分析 prompt 增加趋势段落
 - [ ] Web 趋势视图（接口趋势 / 失败类型分布 / 已知问题收敛 / 上下文效果）
-- [ ] `aitest context trend` CLI 命令
+- [ ] `iatest context trend` CLI 命令
 
 ### Phase 7：深度能力（约 2 天）
 - [ ] 依赖验证安全沙箱策略
@@ -1107,22 +1144,22 @@ def compute_trend_direction(pattern: dict, recent_results: list) -> str:
 
 ```bash
 # 上下文管理
-aitest context export                            # 导出 lessons 为 JSONL
-aitest context import <file>                     # 从 JSONL 导入
-aitest context migrate                           # 执行待应用的 migration
-aitest context validate                          # 校验完整性
-aitest context rebuild-index                     # 从 JSONL 重建 SQLite
-aitest context stats                             # 上下文统计概览
+iatest context export                            # 导出 lessons 为 JSONL
+iatest context import <file>                     # 从 JSONL 导入
+iatest context migrate                           # 执行待应用的 migration
+iatest context validate                          # 校验完整性
+iatest context rebuild-index                     # 从 JSONL 重建 SQLite
+iatest context stats                             # 上下文统计概览
 
 # 趋势分析
-aitest context trend                             # 趋势概览（近 10 次执行）
-aitest context trend --endpoint "/api/login"     # 指定接口趋势
-aitest context trend --days 30                   # 指定时间范围
-aitest context trend --category failure_type     # 按失败类型分布查看
+iatest context trend                             # 趋势概览（近 10 次执行）
+iatest context trend --endpoint "/api/login"     # 指定接口趋势
+iatest context trend --days 30                   # 指定时间范围
+iatest context trend --category failure_type     # 按失败类型分布查看
 
 # 注入审计
-aitest context pack <pack-id>                    # 查看某次注入详情
-aitest context packs --project tempbox --limit 20 # 列出最近注入记录
+iatest context pack <pack-id>                    # 查看某次注入详情
+iatest context packs --project sample-api --limit 20 # 列出最近注入记录
 ```
 
 ---

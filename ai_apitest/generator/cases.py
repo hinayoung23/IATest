@@ -1,14 +1,32 @@
 from __future__ import annotations
 
 import json
+import mimetypes
 import re
 from pathlib import Path
 from typing import Any
 
-from ai_apitest.core.case_schema import normalize_cases, normalize_priority, normalize_test_case
+from ai_apitest.core.case_schema import (
+    external_test_capability_summary,
+    normalize_cases,
+    normalize_priority,
+    normalize_test_case,
+)
 from ai_apitest.core.models import Assertion, Endpoint, TestCase, TestStep
-from ai_apitest.core.paths import project_cases_file, safe_project_name
-from ai_apitest.core.serde import case_from_dict, to_jsonable
+from ai_apitest.core.artifact_language import (
+    artifact_text,
+    current_artifact_language,
+    normalize_artifact_language,
+    set_current_artifact_language,
+)
+from ai_apitest.core.files import atomic_write_text
+from ai_apitest.core.paths import (
+    project_cases_file,
+    project_coverage_manifest_file,
+    project_docs_file,
+    safe_project_name,
+)
+from ai_apitest.core.serde import case_from_dict, endpoint_from_dict, read_json, to_jsonable, write_json
 
 
 def generate_cases(endpoints: list[Endpoint]) -> list[TestCase]:
@@ -82,6 +100,7 @@ def build_case(
     title: str,
     design_method: str,
     tags: list[str],
+    headers: dict[str, Any] | None = None,
     query: dict[str, Any] | None = None,
     path_params: dict[str, Any] | None = None,
     body: Any = None,
@@ -103,9 +122,10 @@ def build_case(
         priority=normalize_priority("", negative=negative, design_method=design_method),
         tags=[*endpoint.tags, *tags],
         design_method=design_method,
-        headers=default_headers(endpoint),
+        headers=default_headers(endpoint) if headers is None else headers,
         path_params=path_params or {},
         query=query or {},
+        parameter_serialization=parameter_serialization(endpoint),
         body=body,
         assertions=assertions or success_assertions(endpoint),
         source=f"{endpoint.method} {endpoint.path}",
@@ -240,8 +260,11 @@ def path_parameter_cases(endpoint: Endpoint, parameter: dict[str, Any], counters
 
 
 def body_negative_cases(endpoint: Endpoint, counters: dict[str, int]) -> list[TestCase]:
-    return [
-        build_case(
+    cases: list[TestCase] = []
+    schema = request_body_schema(endpoint)
+    required = schema.get("required") if isinstance(schema.get("required"), list) else []
+    if bool((endpoint.request_body or {}).get("required") or required):
+        cases.append(build_case(
             endpoint,
             counters,
             title=f"{endpoint.summary or endpoint.path} - 请求体为空",
@@ -255,8 +278,8 @@ def body_negative_cases(endpoint: Endpoint, counters: dict[str, int]) -> list[Te
             risk="negative_behavior",
             negative=True,
             expected_result="请求体缺失必要字段时应返回客户端错误",
-        ),
-        build_case(
+        ))
+    cases.append(build_case(
             endpoint,
             counters,
             title=f"{endpoint.summary or endpoint.path} - 请求体类型错误",
@@ -270,8 +293,8 @@ def body_negative_cases(endpoint: Endpoint, counters: dict[str, int]) -> list[Te
             risk="negative_behavior",
             negative=True,
             expected_result="请求体结构错误时应返回客户端错误",
-        ),
-    ]
+        ))
+    return cases
 
 
 def equivalence_class_cases(endpoint: Endpoint, counters: dict[str, int]) -> list[TestCase]:
@@ -319,8 +342,14 @@ def status_code_coverage_cases(endpoint: Endpoint, counters: dict[str, int]) -> 
 
 def auth_error_cases(endpoint: Endpoint, counters: dict[str, int]) -> list[TestCase]:
     headers = default_headers(endpoint)
-    headers.pop("Authorization", None)
-    headers.pop("authorization", None)
+    # None is an explicit removal marker. It overrides environment-level auth
+    # headers in the executor instead of merely omitting a case-level header.
+    for name in ("Authorization", "Cookie", "X-API-Key", "X-Auth-Token"):
+        headers[name] = None
+    query = default_query(endpoint, include_optional=True)
+    for parameter in endpoint.parameters:
+        if parameter.get("in") == "query" and is_auth_name(str(parameter.get("name") or "")):
+            query.pop(str(parameter.get("name")), None)
     return [
         build_case(
             endpoint,
@@ -328,7 +357,8 @@ def auth_error_cases(endpoint: Endpoint, counters: dict[str, int]) -> list[TestC
             title=f"{endpoint.summary or endpoint.path} - 缺少鉴权信息",
             design_method="auth_error",
             tags=["auth_error", "negative"],
-            query=default_query(endpoint, include_optional=True),
+            headers=headers,
+            query=query,
             path_params=default_path_params(endpoint),
             body=default_body(endpoint),
             assertions=[Assertion(type="status_code", operator="in", expected=[401, 403])],
@@ -341,6 +371,8 @@ def auth_error_cases(endpoint: Endpoint, counters: dict[str, int]) -> list[TestC
 
 
 def has_auth_requirement(endpoint: Endpoint) -> bool:
+    if endpoint.security:
+        return True
     candidates = [
         str(parameter.get("name", "")).lower()
         for parameter in endpoint.parameters
@@ -349,6 +381,11 @@ def has_auth_requirement(endpoint: Endpoint) -> bool:
     candidates.extend(str(item).lower() for item in endpoint.tags)
     description = f"{endpoint.summary} {endpoint.description}".lower()
     return any(token in " ".join(candidates + [description]) for token in ["authorization", "token", "apikey", "api_key", "auth", "鉴权", "认证"])
+
+
+def is_auth_name(value: str) -> bool:
+    normalized = value.strip().lower().replace("-", "_")
+    return any(token in normalized for token in ("authorization", "token", "api_key", "apikey", "auth", "cookie"))
 
 
 def documented_status_codes(endpoint: Endpoint) -> list[int]:
@@ -408,8 +445,9 @@ def build_dependency_chain_case(generator: Endpoint, target: Endpoint, field_nam
                 method=generator.method,
                 path=generator.path,
                 query=default_query(generator, include_optional=True),
+                parameter_serialization=parameter_serialization(generator),
                 assertions=[
-                    Assertion(type="status_code", operator="eq", expected=200),
+                    *success_assertions(generator),
                     Assertion(type="json_path", target=f"$.{field_name}", operator="not_empty"),
                 ],
                 extract={field_name: f"$.{field_name}"},
@@ -419,6 +457,7 @@ def build_dependency_chain_case(generator: Endpoint, target: Endpoint, field_nam
                 method=target.method,
                 path=target.path,
                 path_params={field_name: "{{" + field_name + "}}"},
+                parameter_serialization=parameter_serialization(target),
                 assertions=success_assertions(target),
             ),
         ],
@@ -431,7 +470,13 @@ def dependency_producers(endpoints: list[Endpoint]) -> list[Endpoint]:
         endpoint
         for endpoint in endpoints
         if endpoint.method.upper() in {"GET", "POST"}
-        and any(token in f"{endpoint.path} {endpoint.summary} {endpoint.description}".lower() for token in ["generate", "create", "new", "生成", "创建"])
+        # Resource creation must be expressed by the operation itself. Searching
+        # the whole description produces false positives such as an "extend"
+        # endpoint whose error description merely says "never created".
+        and any(
+            token in f"{endpoint.path} {endpoint.summary} {endpoint.operation_id}".lower()
+            for token in ["generate", "create", "new", "生成", "创建"]
+        )
     ]
 
 
@@ -441,14 +486,25 @@ def first_path_param(endpoint: Endpoint) -> str:
 
 
 def likely_produced_fields(endpoint: Endpoint) -> set[str]:
-    fields = set()
-    text = json.dumps(endpoint.responses, ensure_ascii=False).lower()
-    for name in re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"', text):
-        fields.add(name)
-    if "email" in f"{endpoint.path} {endpoint.summary} {endpoint.description}".lower():
-        fields.add("email")
-    if not fields:
-        fields.update({"id", "email", "token"})
+    """Return only response fields proved by the documented response schema."""
+    fields: set[str] = set()
+    for response in endpoint.responses.values():
+        if not isinstance(response, dict):
+            continue
+        schemas: list[Any] = [response.get("schema")]
+        content = response.get("content")
+        if isinstance(content, dict):
+            schemas.extend(
+                media.get("schema")
+                for media in content.values()
+                if isinstance(media, dict)
+            )
+        for schema in schemas:
+            if not isinstance(schema, dict):
+                continue
+            properties = schema.get("properties")
+            if isinstance(properties, dict):
+                fields.update(str(name) for name in properties if str(name))
     return fields
 
 
@@ -467,12 +523,14 @@ def attach_cleanup_steps(cases: list[TestCase], endpoints: list[Endpoint]) -> li
             endpoint = cleanup_by_field.get(field_name)
             if not endpoint or case_already_deletes_field(case, endpoint, field_name):
                 continue
+            variable = cleanup_variable_for_case(case, field_name)
             steps.append(
                 TestStep(
                     name=f"清理测试数据：删除 {field_name}",
                     method=endpoint.method,
                     path=endpoint.path,
-                    path_params={field_name: "{{" + field_name + "}}"},
+                    path_params={field_name: "{{" + variable + "}}"},
+                    parameter_serialization=parameter_serialization(endpoint),
                     assertions=[Assertion(type="status_code", operator="in", expected=[200, 202, 204, 404])],
                 )
             )
@@ -488,13 +546,19 @@ def attach_setup_steps(cases: list[TestCase], endpoints: list[Endpoint]) -> list
     if not producers:
         return cases
     for case in cases:
-        if case.steps or case.setup_steps:
+        if case.steps or case.setup_steps or case.fixture_requirements:
             continue
-        if not should_auto_prepare_case(case):
-            continue
+        can_auto_prepare = should_auto_prepare_case(case)
         prepared = False
+        absent_value_injected = False
         for field_name, value in list(case.path_params.items()):
             if field_name not in producers or is_template_value(value):
+                continue
+            if case_requires_absent_resource(case):
+                case.path_params[field_name] = absent_resource_value(field_name)
+                absent_value_injected = True
+                continue
+            if not can_auto_prepare:
                 continue
             producer = producers[field_name]
             case.setup_steps.append(
@@ -503,8 +567,9 @@ def attach_setup_steps(cases: list[TestCase], endpoints: list[Endpoint]) -> list
                     method=producer.method,
                     path=producer.path,
                     query=default_query(producer, include_optional=True),
+                    parameter_serialization=parameter_serialization(producer),
                     assertions=[
-                        Assertion(type="status_code", operator="eq", expected=200),
+                        *success_assertions(producer),
                         Assertion(type="json_path", target=f"$.{field_name}", operator="not_empty"),
                     ],
                     extract={field_name: f"$.{field_name}"},
@@ -512,15 +577,52 @@ def attach_setup_steps(cases: list[TestCase], endpoints: list[Endpoint]) -> list
             )
             case.path_params[field_name] = "{{" + field_name + "}}"
             prepared = True
-        if prepared:
+        if prepared or absent_value_injected:
             case.runnable = True
-            if case.risk in {"data_dependent_without_fixture", "destructive_without_fixture", "data_dependent"}:
+            if absent_value_injected or case.risk in {
+                "data_dependent_without_fixture",
+                "destructive_without_fixture",
+                "data_dependent",
+            }:
                 case.risk = "none"
+            case.test_steps = [
+                f"替换路径参数：{case.path_params}。"
+                if str(item).startswith("替换路径参数：")
+                else item
+                for item in case.test_steps
+            ]
+        if absent_value_injected:
+            if not any("不存在资源" in item for item in case.preconditions):
+                case.preconditions.append(
+                    "本用例使用基于 UUID 的保留测试域值表示不存在资源，不创建前置业务数据。"
+                )
+        if prepared:
             if not any("准备" in item for item in case.test_steps):
                 case.test_steps.insert(0, "执行前置准备步骤，创建本用例需要的临时测试数据。")
             if not any("前置准备" in item for item in case.preconditions):
                 case.preconditions.append("本用例会通过前置准备步骤创建所需测试数据，不依赖外部预置数据。")
     return cases
+
+
+def case_requires_absent_resource(case: TestCase) -> bool:
+    title = str(case.title or "")
+    return bool(
+        re.search(
+            r"不存在|未创建|从未创建|未生成|从未生成|未注册|已删除|删除后|"
+            r"\b(?:nonexistent|missing|not[\s_-]*found|never[\s_-]*(?:created|generated)|deleted)\b",
+            title,
+            flags=re.I,
+        )
+    )
+
+
+def absent_resource_value(field_name: str) -> str:
+    name = str(field_name or "").lower()
+    if "email" in name or "mail" in name:
+        return "missing_{{uuid}}@invalid.test"
+    if name.endswith("id") or name == "id":
+        return "missing-{{uuid}}"
+    return "missing-{{uuid}}"
 
 
 def producers_by_field(endpoints: list[Endpoint]) -> dict[str, Endpoint]:
@@ -566,14 +668,45 @@ def produced_fields_for_case(case: TestCase, endpoint_by_key: dict[tuple[str, st
             if step.method.upper() == "DELETE":
                 continue
             endpoint = endpoint_by_key.get((step.method.upper(), step.path))
-            if endpoint and is_resource_producer(endpoint):
+            if endpoint and is_resource_producer(endpoint) and assertions_allow_success(step.assertions):
                 fields.update(likely_produced_fields(endpoint))
             fields.update(name for name in step.extract.keys() if name)
         return fields
     endpoint = endpoint_by_key.get((case.method.upper(), case.path))
-    if endpoint and endpoint.method.upper() != "DELETE" and is_resource_producer(endpoint):
+    if (
+        endpoint
+        and endpoint.method.upper() != "DELETE"
+        and is_resource_producer(endpoint)
+        and assertions_allow_success(case.assertions)
+    ):
         fields.update(likely_produced_fields(endpoint))
     return fields
+
+
+def assertions_allow_success(assertions: list[Assertion]) -> bool:
+    status_assertions = [item for item in assertions if item.type == "status_code"]
+    if not status_assertions:
+        return True
+    for assertion in status_assertions:
+        if assertion.operator == "is_2xx":
+            return True
+        values = assertion.expected if isinstance(assertion.expected, list) else [assertion.expected]
+        for value in values:
+            try:
+                if 200 <= int(value) < 300:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def cleanup_variable_for_case(case: TestCase, field_name: str) -> str:
+    expected_path = f"$.{field_name}"
+    for step in [*case.setup_steps, *case.steps]:
+        for variable, path in step.extract.items():
+            if path == expected_path:
+                return variable
+    return field_name
 
 
 def case_already_deletes_field(case: TestCase, cleanup_endpoint: Endpoint, field_name: str) -> bool:
@@ -607,10 +740,106 @@ def slug(value: str) -> str:
     return normalized or "api"
 
 
-def default_headers(endpoint: Endpoint) -> dict[str, str]:
-    if endpoint.request_body:
-        return {"Content-Type": "application/json"}
-    return {}
+def default_headers(endpoint: Endpoint) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    media_type = request_body_media_type(endpoint)
+    if media_type:
+        headers["Content-Type"] = media_type
+    cookies: list[str] = []
+    for parameter in endpoint.parameters:
+        if not parameter.get("required"):
+            continue
+        location = str(parameter.get("in") or "")
+        name = str(parameter.get("name") or "")
+        if not name:
+            continue
+        value = sample_parameter_value(parameter)
+        if location == "header":
+            headers[name] = serialize_header_parameter(value, explode=bool(parameter.get("explode", False)))
+        elif location == "cookie":
+            cookies.extend(serialize_cookie_parameter(name, value, explode=bool(parameter.get("explode", True))))
+    if cookies:
+        headers["Cookie"] = "; ".join(cookies)
+    return headers
+
+
+def wire_parameter_scalar(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def serialize_header_parameter(value: Any, *, explode: bool) -> str:
+    if isinstance(value, dict):
+        if explode:
+            return ",".join(f"{key}={wire_parameter_scalar(item)}" for key, item in value.items())
+        return ",".join(
+            wire_parameter_scalar(part)
+            for key, item in value.items()
+            for part in (key, item)
+        )
+    if isinstance(value, (list, tuple)):
+        return ",".join(wire_parameter_scalar(item) for item in value)
+    return wire_parameter_scalar(value)
+
+
+def serialize_cookie_parameter(name: str, value: Any, *, explode: bool) -> list[str]:
+    if isinstance(value, dict):
+        if explode:
+            return [f"{key}={wire_parameter_scalar(item)}" for key, item in value.items()]
+        flattened = ",".join(
+            wire_parameter_scalar(part)
+            for key, item in value.items()
+            for part in (key, item)
+        )
+        return [f"{name}={flattened}"]
+    if isinstance(value, (list, tuple)) and explode:
+        return [f"{name}={wire_parameter_scalar(item)}" for item in value]
+    if isinstance(value, (list, tuple)):
+        return [f"{name}=" + ",".join(wire_parameter_scalar(item) for item in value)]
+    return [f"{name}={wire_parameter_scalar(value)}"]
+
+
+def parameter_serialization(endpoint: Endpoint) -> dict[str, dict[str, Any]]:
+    rules: dict[str, dict[str, Any]] = {}
+    for parameter in endpoint.parameters:
+        name = str(parameter.get("name") or "")
+        location = str(parameter.get("in") or "")
+        if not name or location not in {"path", "query"}:
+            continue
+        default_style = "simple" if location == "path" else "form"
+        style = str(parameter.get("style") or default_style)
+        explode = parameter.get("explode")
+        if not isinstance(explode, bool):
+            explode = style == "form"
+        rules[f"{location}.{name}"] = {
+            "style": style,
+            "explode": explode,
+            "allow_reserved": bool(parameter.get("allowReserved", False)),
+        }
+    return rules
+
+
+def request_body_media_type(endpoint: Endpoint) -> str:
+    if not endpoint.request_body:
+        return ""
+    if endpoint.request_body.get("mode") == "file":
+        path = str(endpoint.request_body.get("file_path") or "")
+        return mimetypes.guess_type(path)[0] or "application/octet-stream"
+    content = endpoint.request_body.get("content", {})
+    if not isinstance(content, dict) or not content:
+        return "application/json"
+    for preferred in (
+        "application/json",
+        "application/x-www-form-urlencoded",
+        "multipart/form-data",
+        "application/octet-stream",
+    ):
+        if preferred in content:
+            return preferred
+    return str(next(iter(content)))
 
 
 def default_query(endpoint: Endpoint, include_optional: bool = True) -> dict[str, Any]:
@@ -624,7 +853,7 @@ def default_query(endpoint: Endpoint, include_optional: bool = True) -> dict[str
 def sample_parameter_value(parameter: dict[str, Any]) -> Any:
     name = str(parameter.get("name", "")).lower()
     if name == "prefix":
-        return "aitest_{{timestamp}}"
+        return "iatest_{{timestamp}}"
     return sample_from_schema(parameter.get("schema", {}))
 
 
@@ -649,9 +878,42 @@ def sample_path_value(name: str) -> str:
 def default_body(endpoint: Endpoint) -> Any:
     if not endpoint.request_body:
         return None
+    if endpoint.request_body.get("mode") == "file":
+        path = str(endpoint.request_body.get("file_path") or "").strip()
+        return {"$iatest_file": path} if path else None
     content = endpoint.request_body.get("content", {})
-    media = content.get("application/json") or next(iter(content.values()), {})
-    return sample_from_schema(media.get("schema", {}))
+    media_type = request_body_media_type(endpoint)
+    media = content.get(media_type) or next(iter(content.values()), {})
+    schema = media.get("schema", {})
+    if media_type == "multipart/form-data":
+        return sample_multipart_body(schema)
+    return sample_from_schema(schema)
+
+
+def request_body_schema(endpoint: Endpoint) -> dict[str, Any]:
+    if not endpoint.request_body:
+        return {}
+    content = endpoint.request_body.get("content", {})
+    if not isinstance(content, dict) or not content:
+        return {}
+    media = content.get(request_body_media_type(endpoint)) or next(iter(content.values()), {})
+    schema = media.get("schema") if isinstance(media, dict) else {}
+    return schema if isinstance(schema, dict) else {}
+
+
+def sample_multipart_body(schema: dict[str, Any]) -> dict[str, Any]:
+    body = sample_from_schema(schema)
+    if not isinstance(body, dict):
+        return {"value": body}
+    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+    for name, property_schema in properties.items() if isinstance(properties, dict) else []:
+        if isinstance(property_schema, dict) and property_schema.get("format") in {"binary", "byte"}:
+            body[str(name)] = {
+                "filename": f"{name}.bin",
+                "content": "iatest-sample",
+                "content_type": str(property_schema.get("contentMediaType") or "application/octet-stream"),
+            }
+    return body
 
 
 def default_assertions(endpoint: Endpoint) -> list[Assertion]:
@@ -659,12 +921,61 @@ def default_assertions(endpoint: Endpoint) -> list[Assertion]:
 
 
 def success_assertions(endpoint: Endpoint) -> list[Assertion]:
-    expected_status = "200"
+    expected_status: str | None = None
     for status in endpoint.responses:
-        if str(status).startswith("2"):
+        if str(status).isdigit() and str(status).startswith("2"):
             expected_status = str(status)
             break
-    return [Assertion(type="status_code", operator="eq", expected=int(expected_status))]
+    if expected_status is None:
+        # An undocumented response must not silently become an invented 200
+        # contract. We can still assert the protocol-level success class.
+        return [Assertion(type="status_code", operator="is_2xx", expected=None)]
+    assertions = [Assertion(type="status_code", operator="eq", expected=int(expected_status))]
+    response = endpoint.responses.get(expected_status) or endpoint.responses.get(int(expected_status)) or {}
+    if not isinstance(response, dict):
+        return assertions
+    content = response.get("content") if isinstance(response.get("content"), dict) else {}
+    schemas = [
+        response.get("schema"),
+        *(media.get("schema") for media in content.values() if isinstance(media, dict)),
+    ]
+    schema = next((item for item in schemas if isinstance(item, dict)), {})
+    if schema.get("type") == "array":
+        assertions.append(Assertion(type="json_path", target="$", operator="is_array", expected=True))
+        return assertions
+    properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+    declared_required = schema.get("required")
+    required = (
+        {str(item) for item in declared_required}
+        if isinstance(declared_required, list)
+        else {str(item) for item in properties}
+    )
+    for name, property_schema in properties.items():
+        if str(name) not in required or not isinstance(property_schema, dict):
+            continue
+        schema_type = property_schema.get("type")
+        nullable = bool(property_schema.get("nullable")) or (
+            isinstance(schema_type, list) and "null" in schema_type
+        )
+        if isinstance(schema_type, list):
+            schema_type = next((item for item in schema_type if item != "null"), "")
+        operator = "exists" if nullable else {
+            "array": "is_array",
+            "string": "is_string",
+            "integer": "is_integer",
+            "number": "is_number",
+            "boolean": "is_boolean",
+            "object": "is_object",
+        }.get(str(schema_type or ""), "exists")
+        assertions.append(
+            Assertion(
+                type="json_path",
+                target=f"$.{name}",
+                operator=operator,
+                expected=True,
+            )
+        )
+    return assertions
 
 
 def client_error_assertions() -> list[Assertion]:
@@ -691,11 +1002,64 @@ def wrong_type_value(parameter: dict[str, Any]) -> Any:
 
 
 def boundary_values(parameter: dict[str, Any]) -> list[tuple[str, Any]]:
-    schema_type = parameter.get("schema", {}).get("type", "string")
+    schema = parameter.get("schema", {}) if isinstance(parameter.get("schema"), dict) else {}
+    schema_type = schema.get("type", "string")
     if schema_type in {"integer", "number"}:
-        return [("0", 0), ("负数", -1), ("超大值", 999999999)]
+        values: list[tuple[str, Any]] = []
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        exclusive_minimum = schema.get("exclusiveMinimum")
+        exclusive_maximum = schema.get("exclusiveMaximum")
+        if isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool):
+            minimum = exclusive_minimum
+        if isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool):
+            maximum = exclusive_maximum
+        if isinstance(minimum, (int, float)) and not isinstance(minimum, bool):
+            delta = 1 if schema_type == "integer" else 0.1
+            if exclusive_minimum is True or (isinstance(exclusive_minimum, (int, float)) and not isinstance(exclusive_minimum, bool)):
+                values.extend([("高于排他最小边界", minimum + delta), ("等于排他最小边界", minimum)])
+            else:
+                values.extend([("最小边界", minimum), ("低于最小边界", minimum - delta)])
+        if isinstance(maximum, (int, float)) and not isinstance(maximum, bool):
+            delta = 1 if schema_type == "integer" else 0.1
+            if exclusive_maximum is True or (isinstance(exclusive_maximum, (int, float)) and not isinstance(exclusive_maximum, bool)):
+                values.extend([("低于排他最大边界", maximum - delta), ("等于排他最大边界", maximum)])
+            else:
+                values.extend([("最大边界", maximum), ("高于最大边界", maximum + delta)])
+        return values or [("0", 0), ("负数", -1), ("超大值", 999999999)]
     if schema_type == "boolean":
         return [("true", True), ("false", False)]
+    if schema_type == "array":
+        values = []
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        sample = sample_from_schema(schema.get("items", {}))
+        if isinstance(minimum, int):
+            values.extend([("最小元素数", [sample] * minimum), ("低于最小元素数", [sample] * max(0, minimum - 1))])
+        if isinstance(maximum, int):
+            values.extend([("最大元素数", [sample] * maximum), ("高于最大元素数", [sample] * (maximum + 1))])
+        return values or [("空数组", []), ("单元素", [sample])]
+    string_values: list[tuple[str, Any]] = []
+    minimum_length = schema.get("minLength")
+    maximum_length = schema.get("maxLength")
+    if isinstance(minimum_length, int):
+        string_values.extend(
+            [
+                ("最小长度", "a" * minimum_length),
+                ("低于最小长度", "a" * max(0, minimum_length - 1)),
+            ]
+        )
+    if isinstance(maximum_length, int):
+        string_values.extend(
+            [
+                ("最大长度", "a" * maximum_length),
+                ("高于最大长度", "a" * (maximum_length + 1)),
+            ]
+        )
+    if schema.get("pattern"):
+        string_values.append(("不匹配格式", "!invalid-format!"))
+    if string_values:
+        return string_values
     return [
         ("空字符串", ""),
         ("单字符", "a"),
@@ -755,10 +1119,35 @@ def sample_from_schema(schema: dict[str, Any]) -> Any:
     return "string"
 
 
-def save_cases(root: Path, cases: list[TestCase], project: str = "default") -> Path:
+def save_cases(
+    root: Path,
+    cases: list[TestCase],
+    project: str = "default",
+    *,
+    artifact_language: str | None = None,
+) -> Path:
     path = project_cases_file(root, project)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_cases_markdown(project, normalize_cases(cases)), encoding="utf-8")
+    language = normalize_artifact_language(
+        artifact_language or current_artifact_language()
+    )
+    set_current_artifact_language(language)
+    normalized = normalize_cases(cases)
+    atomic_write_text(
+        path,
+        render_cases_markdown(project, normalized, artifact_language=language),
+    )
+    endpoints = [
+        endpoint_from_dict(item)
+        for item in read_json(project_docs_file(root, project), [])
+        if isinstance(item, dict)
+    ]
+    from ai_apitest.domain.contracts import build_coverage_manifest
+
+    write_json(
+        project_coverage_manifest_file(root, project),
+        build_coverage_manifest(endpoints, normalized),
+    )
     return path
 
 
@@ -770,7 +1159,7 @@ def load_cases_from_markdown(root: Path, project: str = "default") -> list[TestC
 
 
 def parse_cases_markdown(content: str) -> list[TestCase]:
-    match = re.search(r"```aitest-cases-json\s*(.*?)\s*```", content, flags=re.S)
+    match = re.search(r"```iatest-cases-json\s*(.*?)\s*```", content, flags=re.S)
     if not match:
         return []
     payload = json.loads(match.group(1))
@@ -778,71 +1167,95 @@ def parse_cases_markdown(content: str) -> list[TestCase]:
     return normalize_cases([case_from_dict(item) for item in cases if isinstance(item, dict)])
 
 
-def render_cases_markdown(project: str, cases: list[TestCase]) -> str:
+def render_cases_markdown(
+    project: str,
+    cases: list[TestCase],
+    *,
+    artifact_language: str | None = None,
+) -> str:
+    language = normalize_artifact_language(
+        artifact_language or current_artifact_language()
+    )
+    t = lambda key: artifact_text(key, language)
     payload = {
-        "version": 1,
+        "version": 2,
         "project": safe_project_name(project),
+        "artifact_language": language,
         "cases": to_jsonable(cases),
     }
-    sections = "\n\n".join(render_case_markdown(case) for case in cases)
-    return f"""# {safe_project_name(project)} 接口测试用例集
+    sections = "\n\n".join(
+        render_case_markdown(case, artifact_language=language)
+        for case in cases
+    )
+    return f"""# {safe_project_name(project)} {t('test_case_collection')}
 
-> 这个文件是该项目的用例源文件。浏览器页面会直接读取和保存本文件。
+> {t('case_source_note')}
 
-## 结构化用例数据
+## {t('structured_case_data')}
 
-```aitest-cases-json
+```iatest-cases-json
 {json.dumps(payload, ensure_ascii=False, indent=2)}
 ```
 
-## 用例详情
+## {t('case_details')}
 
 {sections}
 """
 
 
-def render_case_markdown(case: TestCase) -> str:
+def render_case_markdown(
+    case: TestCase,
+    *,
+    artifact_language: str | None = None,
+) -> str:
+    language = normalize_artifact_language(
+        artifact_language or current_artifact_language()
+    )
+    t = lambda key: artifact_text(key, language)
     assertions = "\n".join(
         f"| {index} | {item.type} | {item.target or '-'} | {item.operator} | {item.expected} |"
         for index, item in enumerate(case.assertions, start=1)
     ) or "| - | - | - | - | - |"
-    preconditions = render_bullets(case.preconditions or ["无特殊前置条件。"])
+    preconditions = render_bullets(case.preconditions or [t("no_special_preconditions")], artifact_language=language)
     test_steps = render_numbered(case.test_steps or inferred_case_steps(case))
-    setup_steps = render_setup_steps_markdown(case)
-    steps = render_steps_markdown(case)
-    cleanup_steps = render_cleanup_steps_markdown(case)
+    setup_steps = render_setup_steps_markdown(case, artifact_language=language)
+    steps = render_steps_markdown(case, artifact_language=language)
+    cleanup_steps = render_cleanup_steps_markdown(case, artifact_language=language)
     return f"""### [{case.id}] {case.title}
 
-#### 基本信息
-| 属性 | 值 |
+#### {t('basic_information')}
+| {t('attribute')} | {t('value')} |
 |------|-----|
-| 用例ID | {case.id} |
-| 接口路径 | {case.method} {case.path} |
-| 用例等级 | {case.priority} |
-| 设计方法 | {case.design_method} |
-| 是否负向 | {case.negative} |
-| 可执行 | {case.runnable} |
-| 风险 | {case.risk} |
-| 标签 | {", ".join(case.tags)} |
-| 预期结果 | {case.expected_result} |
+| {t('case_id')} | {case.id} |
+| {t('endpoint_path')} | {case.method} {case.path} |
+| {t('priority')} | {case.priority} |
+| {t('design_method')} | {case.design_method} |
+| {t('negative')} | {case.negative} |
+| {t('runnable')} | {case.runnable} |
+| {t('risk')} | {case.risk} |
+| {t('tags')} | {", ".join(case.tags)} |
+| {t('business_rules')} | {", ".join(case.rule_ids) or "-"} |
+| {t('coverage_partitions')} | {", ".join(case.coverage_partition_ids) or "-"} |
+| {t('project_must_provide')} | {external_test_capability_summary(case.fixture_requirements, language) or "-"} |
+| {t('expected_result')} | {case.expected_result} |
 
-#### 前置条件
+#### {t('preconditions')}
 {preconditions}
 
-#### 用例步骤
+#### {t('case_steps')}
 {test_steps}
 
-#### 预期结果
-{case.expected_result or "以断言列表为准。"}
+#### {t('expected_result')}
+{case.expected_result or t('assertions_define_expected')}
 
-#### 请求信息
-- 方法：`{case.method}`
-- 路径：`{case.path}`
-- 路径参数：`{case.path_params}`
+#### {t('request_information')}
+- {t('method')}: `{case.method}`
+- {t('path')}: `{case.path}`
+- {t('path_parameters')}: `{case.path_params}`
 - Query：`{case.query}`
 
-#### 断言列表
-| 序号 | 断言类型 | 断言目标 | 操作符 | 期望值 |
+#### {t('assertions')}
+| {t('number')} | {t('assertion_type')} | {t('assertion_target')} | {t('operator')} | {t('expected_value')} |
 |------|----------|----------|--------|--------|
 {assertions}
 
@@ -852,14 +1265,14 @@ def render_case_markdown(case: TestCase) -> str:
 
 {cleanup_steps}
 
-#### 生成说明
-- 当前版本使用规则生成多设计方法用例；AI 生成可作为后续增强。
-- 生成依据：{case.source}
+#### {t('generation_notes')}
+- {t('rule_generation_note')}
+- {t('generation_basis')}: {case.source}
 """
 
 
-def render_bullets(items: list[str]) -> str:
-    return "\n".join(f"- {item}" for item in items) or "- 无"
+def render_bullets(items: list[str], *, artifact_language: str | None = None) -> str:
+    return "\n".join(f"- {item}" for item in items) or f"- {artifact_text('none', artifact_language)}"
 
 
 def render_numbered(items: list[str]) -> str:
@@ -880,10 +1293,18 @@ def inferred_case_steps(case: TestCase) -> list[str]:
     return steps
 
 
-def render_steps_markdown(case: TestCase) -> str:
+def render_steps_markdown(
+    case: TestCase,
+    *,
+    artifact_language: str | None = None,
+) -> str:
     if not case.steps:
         return ""
-    lines = ["#### 执行步骤", ""]
+    language = normalize_artifact_language(
+        artifact_language or current_artifact_language()
+    )
+    t = lambda key: artifact_text(key, language)
+    lines = [f"#### {t('execution_steps')}", ""]
     for index, step in enumerate(case.steps, start=1):
         assertions = ", ".join(
             f"{item.type} {item.target or '-'} {item.operator} {item.expected}"
@@ -892,29 +1313,54 @@ def render_steps_markdown(case: TestCase) -> str:
         lines.extend(
             [
                 f"{index}. **{step.name}**",
-                f"   - 请求：`{step.method} {step.path}`",
-                f"   - 路径参数：`{step.path_params}`",
+                f"   - {t('request')}: `{step.method} {step.path}`",
+                f"   - {t('path_parameters')}: `{step.path_params}`",
                 f"   - Query：`{step.query}`",
-                f"   - 提取：`{step.extract}`",
-                f"   - 断言：{assertions or '-'}",
+                f"   - {t('extract')}: `{step.extract}`",
+                f"   - {t('assertions')}: {assertions or '-'}",
             ]
         )
     return "\n".join(lines)
 
 
-def render_setup_steps_markdown(case: TestCase) -> str:
+def render_setup_steps_markdown(
+    case: TestCase,
+    *,
+    artifact_language: str | None = None,
+) -> str:
     if not case.setup_steps:
         return ""
-    return render_lifecycle_steps_markdown("前置准备步骤", case.setup_steps)
+    return render_lifecycle_steps_markdown(
+        artifact_text("setup_steps", artifact_language),
+        case.setup_steps,
+        artifact_language=artifact_language,
+    )
 
 
-def render_cleanup_steps_markdown(case: TestCase) -> str:
+def render_cleanup_steps_markdown(
+    case: TestCase,
+    *,
+    artifact_language: str | None = None,
+) -> str:
     if not case.cleanup_steps:
         return ""
-    return render_lifecycle_steps_markdown("清理步骤", case.cleanup_steps)
+    return render_lifecycle_steps_markdown(
+        artifact_text("cleanup_steps", artifact_language),
+        case.cleanup_steps,
+        artifact_language=artifact_language,
+    )
 
 
-def render_lifecycle_steps_markdown(title: str, steps: list[TestStep]) -> str:
+def render_lifecycle_steps_markdown(
+    title: str,
+    steps: list[TestStep],
+    *,
+    artifact_language: str | None = None,
+) -> str:
+    language = normalize_artifact_language(
+        artifact_language or current_artifact_language()
+    )
+    t = lambda key: artifact_text(key, language)
     lines = [f"#### {title}", ""]
     for index, step in enumerate(steps, start=1):
         assertions = ", ".join(
@@ -924,10 +1370,10 @@ def render_lifecycle_steps_markdown(title: str, steps: list[TestStep]) -> str:
         lines.extend(
             [
                 f"{index}. **{step.name}**",
-                f"   - 请求：`{step.method} {step.path}`",
-                f"   - 路径参数：`{step.path_params}`",
+                f"   - {t('request')}: `{step.method} {step.path}`",
+                f"   - {t('path_parameters')}: `{step.path_params}`",
                 f"   - Query：`{step.query}`",
-                f"   - 断言：{assertions or '-'}",
+                f"   - {t('assertions')}: {assertions or '-'}",
             ]
         )
     return "\n".join(lines)

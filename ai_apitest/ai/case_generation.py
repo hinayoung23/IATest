@@ -5,10 +5,11 @@ from typing import Any, Callable
 
 from ai_apitest.ai.provider import chat_completion, extract_json_array, repair_json_array
 from ai_apitest.ai.prompting import render_prompt
+from ai_apitest.core.artifact_language import output_language_instruction
 from ai_apitest.core.case_schema import normalize_design_method, normalize_priority, normalize_test_case
 from ai_apitest.core.models import Assertion, Endpoint, TestCase, TestStep
 from ai_apitest.core.serde import normalize_assertion_operator, step_from_dict, string_list, to_jsonable
-from ai_apitest.generator.cases import module_name
+from ai_apitest.generator.cases import module_name, parameter_serialization, success_assertions
 
 UNCERTAIN_RESULT_MARKERS = (
     "需要结合业务规则确认",
@@ -146,7 +147,10 @@ def generate_supplemental_cases_with_llm(
 
 
 def system_prompt() -> str:
-    return render_prompt("case_generation_system.md")
+    return render_prompt(
+        "case_generation_system.md",
+        {"OUTPUT_LANGUAGE_INSTRUCTION": output_language_instruction()},
+    )
 
 
 def user_prompt(endpoints: list[Endpoint], strategy_context: dict | None = None, context_block: str = "") -> str:
@@ -269,7 +273,7 @@ def validate_cases(raw_cases: list[object], endpoints: list[Endpoint]) -> list[T
                 )
             )
         if not assertions:
-            assertions = [Assertion(type="status_code", operator="eq", expected=200)]
+            assertions = success_assertions(endpoint)
         case = TestCase(
             id=case_id,
             title=str(raw.get("title") or endpoint.summary or f"{method} {path}"),
@@ -302,6 +306,8 @@ def validate_cases(raw_cases: list[object], endpoints: list[Endpoint]) -> list[T
             scenario_id=str(raw.get("scenario_id") or ""),
         )
         refined = refine_case_with_endpoint(case, endpoint)
+        if method != "CHAIN":
+            refined.parameter_serialization = parameter_serialization(endpoint)
         cases.append(normalize_test_case(refined, module=module, index=counters[module], source_tag="ai_generated"))
     return cases
 
@@ -700,7 +706,7 @@ def _generate_plan_single(
         base_url=base_url, model=model, api_key_env=api_key_env, provider=provider,
         messages=[{
             "role": "user",
-            "content": render_prompt("coverage_plan.md", {
+            "content": output_language_instruction() + "\n\n" + render_prompt("coverage_plan.md", {
                 "ENDPOINTS_JSON": json.dumps([to_jsonable(ep) for ep in endpoints], ensure_ascii=False, indent=2),
                 "ALL_ENDPOINTS_JSON": json.dumps([to_jsonable(ep) for ep in all_endpoints], ensure_ascii=False, indent=2) if batch_context else "",
                 "STRATEGIES_JSON": json.dumps(strategy_context or {}, ensure_ascii=False, indent=2),
@@ -782,7 +788,7 @@ def _generate_chain_plan(
         base_url=base_url, model=model, api_key_env=api_key_env, provider=provider,
         messages=[{
             "role": "user",
-            "content": render_prompt("coverage_plan_chain.md", {
+            "content": output_language_instruction() + "\n\n" + render_prompt("coverage_plan_chain.md", {
                 "ENDPOINTS_JSON": json.dumps([to_jsonable(ep) for ep in endpoints], ensure_ascii=False, indent=2),
                 "DEPENDENCY_GRAPH_JSON": json.dumps(dep_graph, ensure_ascii=False, indent=2),
                 "EXISTING_PLAN_JSON": json.dumps(existing_summary, ensure_ascii=False, indent=2),
@@ -949,10 +955,10 @@ def generate_cases_from_plan_batch(
         base_url=base_url, model=model, api_key_env=api_key_env, provider=provider,
         messages=[{
             "role": "system",
-            "content": render_prompt("case_generation_system.md", {}),
+            "content": system_prompt(),
         }, {
             "role": "user",
-            "content": render_prompt("case_generation_from_plan.md", {
+            "content": output_language_instruction() + "\n\n" + render_prompt("case_generation_from_plan.md", {
                 "PLAN_ITEMS_JSON": json.dumps(plan_items, ensure_ascii=False, indent=2),
                 "ENDPOINTS_JSON": json.dumps([to_jsonable(ep) for ep in endpoints], ensure_ascii=False, indent=2),
                 "EXISTING_CASES_JSON": json.dumps(existing_brief, ensure_ascii=False, indent=2),

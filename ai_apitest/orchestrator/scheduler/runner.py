@@ -9,8 +9,9 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from ai_apitest.ai.workflows import build_ai_failure_review, build_ai_report_analysis
+from ai_apitest.ai.workflows import build_ai_report_bundle
 from ai_apitest.core.config import load_config
+from ai_apitest.core.locking import project_operation_lock
 from ai_apitest.execution.runner import run_cases
 from ai_apitest.generator.cases import load_cases_from_markdown
 from ai_apitest.report.markdown import write_report
@@ -41,16 +42,33 @@ def run_schedule_forever(root: Path, project: str, run_once: bool = False, conso
     scheduler.start()
 
 
-def execute_scheduled_run(root: Path, project: str, schedule: dict, console: Any = None) -> Path:
-    case_ids = resolve_schedule_case_ids(root, project, schedule)
-    results = run_cases(root, project=project, case_ids=case_ids, run_scope=str(schedule.get("scope", "full")))
-    report = write_report(
-        root,
-        results,
-        project=project,
-        ai_review=build_ai_failure_review(root, project, results),
-        analysis=build_ai_report_analysis(root, project, results),
-    )
+def execute_scheduled_run(
+    root: Path,
+    project: str,
+    schedule: dict,
+    console: Any = None,
+    *,
+    artifact_language: str | None = None,
+) -> Path:
+    with project_operation_lock(root, project, operation=f"schedule:{schedule.get('name') or 'run'}"):
+        case_ids = resolve_schedule_case_ids(root, project, schedule)
+        results = run_cases(root, project=project, case_ids=case_ids, run_scope=str(schedule.get("scope", "full")))
+        if not results:
+            raise ValueError(f"定时任务 {schedule.get('name') or '-'} 没有匹配到可执行范围，未生成空报告")
+        ai_review, analysis = build_ai_report_bundle(
+            root,
+            project,
+            results,
+            artifact_language=artifact_language,
+        )
+        report = write_report(
+            root,
+            results,
+            project=project,
+            ai_review=ai_review,
+            analysis=analysis,
+            artifact_language=artifact_language,
+        )
     emit(console, f"定时任务执行完成：{report}")
     return report
 

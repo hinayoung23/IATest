@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from typing import Any, Iterator
 
 from ai_apitest.core.models import Assertion, CaseResult
 from ai_apitest.core.models import Endpoint, TestCase
+from ai_apitest.core.artifact_language import artifact_text, current_artifact_language
+from ai_apitest.core.files import atomic_write_text
 from ai_apitest.context.signatures import compute_exact_key, compute_semantic_key, is_contradictory
 from ai_apitest.core.paths import (
     project_context_dir,
@@ -21,6 +24,8 @@ from ai_apitest.core.paths import (
 )
 
 SCHEMA_VERSION = 2
+_SCHEMA_READY: dict[str, int] = {}
+_SCHEMA_LOCK = threading.Lock()
 
 LESSON_COLUMNS = [
     "id",
@@ -91,13 +96,38 @@ def loads_json(value: str | None, default: Any) -> Any:
 def context_connection(root: Path, project: str = "default") -> Iterator[sqlite3.Connection]:
     db = project_context_db(root, project)
     db.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db) as conn:
+    conn = sqlite3.connect(db)
+    try:
         conn.row_factory = sqlite3.Row
         conn.execute("pragma foreign_keys = on")
         conn.execute("pragma journal_mode = wal")
         conn.execute("pragma busy_timeout = 5000")
-        ensure_schema(conn)
+        ensure_schema_once(conn, db)
+        # Schema setup includes version-row migrations and therefore may open
+        # an implicit transaction on a cold database. Atomic claim operations
+        # below start their own BEGIN IMMEDIATE transaction, so establish a
+        # clean transaction boundary before handing the connection to callers.
+        conn.commit()
         yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def ensure_schema_once(conn: sqlite3.Connection, db: Path) -> None:
+    key = str(db.resolve())
+    inode = db.stat().st_ino
+    if _SCHEMA_READY.get(key) == inode:
+        return
+    with _SCHEMA_LOCK:
+        inode = db.stat().st_ino
+        if _SCHEMA_READY.get(key) == inode:
+            return
+        ensure_schema(conn)
+        _SCHEMA_READY[key] = inode
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -151,6 +181,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         "create index if not exists idx_lessons_scope_endpoint on lessons(project, scope, method, path)",
         "create index if not exists idx_lessons_lifecycle on lessons(lifecycle_status)",
         "create index if not exists idx_lessons_verification on lessons(verification_status)",
+        "create index if not exists idx_lessons_injection on lessons(project, lifecycle_status, review_status, verification_status)",
+        "create index if not exists idx_lessons_endpoint_lookup on lessons(project, method, path, updated_at)",
     ]:
         conn.execute(statement)
     conn.execute(
@@ -313,8 +345,50 @@ def ensure_fts(conn: sqlite3.Connection) -> None:
             )
             """
         )
+        conn.execute(
+            """
+            create trigger if not exists lessons_fts_insert after insert on lessons begin
+                insert into lessons_fts(id, title, content) values (new.id, new.title, new.content);
+            end
+            """
+        )
+        conn.execute(
+            """
+            create trigger if not exists lessons_fts_update after update of title, content on lessons begin
+                delete from lessons_fts where id = old.id;
+                insert into lessons_fts(id, title, content) values (new.id, new.title, new.content);
+            end
+            """
+        )
+        conn.execute(
+            """
+            create trigger if not exists lessons_fts_delete after delete on lessons begin
+                delete from lessons_fts where id = old.id;
+            end
+            """
+        )
+        lesson_count = int(conn.execute("select count(*) from lessons").fetchone()[0])
+        fts_count = int(conn.execute("select count(*) from lessons_fts").fetchone()[0])
+        if lesson_count != fts_count:
+            rebuild_fts(conn)
     except sqlite3.OperationalError:
         return
+
+
+def rebuild_fts(conn: sqlite3.Connection) -> int:
+    conn.execute("delete from lessons_fts")
+    conn.execute("insert into lessons_fts(id, title, content) select id, title, content from lessons")
+    return int(conn.execute("select count(*) from lessons_fts").fetchone()[0])
+
+
+def rebuild_fts_index(root: Path, project: str = "default") -> int:
+    with context_connection(root, project) as conn:
+        try:
+            count = rebuild_fts(conn)
+        except sqlite3.OperationalError:
+            return 0
+        audit(conn, "context_index_rebuilt", "lesson", safe_project_name(project), safe_project_name(project), "system", {"indexed": count})
+        return count
 
 
 def migrate_project(root: Path, project: str = "default") -> Path:
@@ -427,7 +501,6 @@ def insert_lesson(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
         f"insert into lessons({','.join(LESSON_COLUMNS)}) values ({','.join(['?'] * len(LESSON_COLUMNS))})",
         values,
     )
-    refresh_fts(conn, payload["id"], payload["title"], payload["content"])
 
 
 def merge_duplicate(conn: sqlite3.Connection, existing: dict[str, Any], payload: dict[str, Any], actor: str) -> None:
@@ -473,14 +546,6 @@ def find_conflicts(conn: sqlite3.Connection, payload: dict[str, Any]) -> list[di
     return [dict(row) for row in rows if is_contradictory(payload["content"], row["content"])]
 
 
-def refresh_fts(conn: sqlite3.Connection, lesson_id: str, title: str, content: str) -> None:
-    try:
-        conn.execute("delete from lessons_fts where id = ?", (lesson_id,))
-        conn.execute("insert into lessons_fts(id, title, content) values (?, ?, ?)", (lesson_id, title, content))
-    except sqlite3.OperationalError:
-        return
-
-
 def add_lesson_source(conn: sqlite3.Connection, lesson_id: str, source: str, source_type: str) -> None:
     conn.execute(
         "insert into lesson_sources(lesson_id, source, source_type, extracted_at) values (?, ?, ?, ?)",
@@ -517,26 +582,151 @@ def list_lessons(
     scope: str = "",
     query_text: str = "",
     limit: int = 50,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
-    query = "select * from lessons where project = ?"
-    params: list[Any] = [safe_project_name(project)]
-    if lifecycle_status:
-        query += " and lifecycle_status = ?"
-        params.append(lifecycle_status)
-    if lesson_type:
-        query += " and lesson_type = ?"
-        params.append(lesson_type)
-    if scope:
-        query += " and scope = ?"
-        params.append(scope)
-    if query_text:
-        query += " and (title like ? or content like ? or path like ?)"
-        like = f"%{query_text}%"
-        params.extend([like, like, like])
-    query += " order by updated_at desc limit ?"
-    params.append(limit)
+    filters, params = lesson_filter_sql(
+        project,
+        lifecycle_status=lifecycle_status,
+        lesson_type=lesson_type,
+        scope=scope,
+    )
     with context_connection(root, project) as conn:
-        return [row_to_lesson(row) for row in conn.execute(query, params).fetchall()]
+        rows = query_lesson_rows(
+            conn,
+            filters,
+            params,
+            query_text=query_text,
+            limit=max(1, int(limit)),
+            offset=max(0, int(offset)),
+        )
+        return [row_to_lesson(row) for row in rows]
+
+
+def count_lessons(
+    root: Path,
+    project: str,
+    *,
+    lifecycle_status: str = "",
+    lesson_type: str = "",
+    scope: str = "",
+    query_text: str = "",
+) -> int:
+    filters, params = lesson_filter_sql(
+        project,
+        lifecycle_status=lifecycle_status,
+        lesson_type=lesson_type,
+        scope=scope,
+    )
+    with context_connection(root, project) as conn:
+        if query_text:
+            match = fts_match_query(query_text)
+            if match:
+                try:
+                    row = conn.execute(
+                        f"""
+                        select count(distinct l.id)
+                        from lessons l
+                        join lessons_fts on lessons_fts.id = l.id
+                        where {filters} and lessons_fts match ?
+                        """,
+                        [*params, match],
+                    ).fetchone()
+                    count = int(row[0]) if row else 0
+                    if count:
+                        return count
+                except sqlite3.OperationalError:
+                    pass
+            like = f"%{query_text}%"
+            row = conn.execute(
+                f"select count(*) from lessons l where {filters} and (l.title like ? or l.content like ? or l.path like ?)",
+                [*params, like, like, like],
+            ).fetchone()
+            return int(row[0]) if row else 0
+        row = conn.execute(f"select count(*) from lessons l where {filters}", params).fetchone()
+        return int(row[0]) if row else 0
+
+
+def lesson_filter_sql(
+    project: str,
+    *,
+    lifecycle_status: str,
+    lesson_type: str,
+    scope: str,
+) -> tuple[str, list[Any]]:
+    clauses = ["l.project = ?"]
+    params: list[Any] = [safe_project_name(project)]
+    for column, value in (
+        ("l.lifecycle_status", lifecycle_status),
+        ("l.lesson_type", lesson_type),
+        ("l.scope", scope),
+    ):
+        if value:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    return " and ".join(clauses), params
+
+
+def query_lesson_rows(
+    conn: sqlite3.Connection,
+    filters: str,
+    params: list[Any],
+    *,
+    query_text: str,
+    limit: int,
+    offset: int,
+) -> list[sqlite3.Row]:
+    if query_text:
+        match = fts_match_query(query_text)
+        if match:
+            try:
+                rows = conn.execute(
+                    f"""
+                    select distinct l.*
+                    from lessons l
+                    join lessons_fts on lessons_fts.id = l.id
+                    where {filters} and lessons_fts match ?
+                    order by bm25(lessons_fts), l.updated_at desc
+                    limit ? offset ?
+                    """,
+                    [*params, match, limit, offset],
+                ).fetchall()
+                if rows:
+                    return rows
+                any_match = conn.execute(
+                    f"""
+                    select 1
+                    from lessons l
+                    join lessons_fts on lessons_fts.id = l.id
+                    where {filters} and lessons_fts match ?
+                    limit 1
+                    """,
+                    [*params, match],
+                ).fetchone()
+                if any_match:
+                    return []
+            except sqlite3.OperationalError:
+                pass
+        like = f"%{query_text}%"
+        return conn.execute(
+            f"""
+            select l.* from lessons l
+            where {filters} and (l.title like ? or l.content like ? or l.path like ?)
+            order by l.updated_at desc limit ? offset ?
+            """,
+            [*params, like, like, like, limit, offset],
+        ).fetchall()
+    return conn.execute(
+        f"select l.* from lessons l where {filters} order by l.updated_at desc limit ? offset ?",
+        [*params, limit, offset],
+    ).fetchall()
+
+
+def fts_match_query(value: str) -> str:
+    tokens = [token for token in value.strip().split() if token]
+    if not tokens:
+        return ""
+    escaped = [token.replace('"', '""') for token in tokens[:20]]
+    return " AND ".join(f'"{token}"*' for token in escaped)
 
 
 def update_lesson_review(
@@ -636,7 +826,6 @@ def edit_lesson(
             """,
             (title, content, confidence, dumps(tags), timestamp, actor, lesson_id),
         )
-        refresh_fts(conn, lesson_id, title, content)
         audit(conn, "lesson_edited", "lesson", lesson_id, safe_project_name(project), actor, {"title": title})
         return True
 
@@ -653,6 +842,38 @@ def recent_audit_logs(root: Path, project: str, limit: int = 50) -> list[dict[st
             data["detail"] = loads_json(data.get("detail"), {})
             items.append(data)
         return items
+
+
+def prune_context_history(root: Path, project: str, *, dry_run: bool = False) -> dict[str, int]:
+    """Bound append-only operational history without deleting active work."""
+    from ai_apitest.core.config import load_config
+
+    safe_project = safe_project_name(project)
+    retention = load_config(root).get("context", {}).get("retention", {})
+    specs = {
+        "audit_logs": ("created_at", ""),
+        "extraction_jobs": ("updated_at", "and status in ('completed', 'permanent_failed')"),
+        "execution_trends": ("created_at", ""),
+        "failure_patterns": ("updated_at", ""),
+    }
+    summary: dict[str, int] = {}
+    with context_connection(root, safe_project) as conn:
+        for table, (order_column, extra_filter) in specs.items():
+            max_records = max(10, int(retention.get(table, {}).get("max_records", 1000)))
+            rows = conn.execute(
+                f"""
+                select id from {table}
+                where project = ? {extra_filter}
+                order by {order_column} desc, id desc
+                limit -1 offset ?
+                """,
+                (safe_project, max_records),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            summary[table] = len(ids)
+            if ids and not dry_run:
+                conn.executemany(f"delete from {table} where project = ? and id = ?", [(safe_project, item) for item in ids])
+    return summary
 
 
 def row_to_lesson(row: sqlite3.Row) -> dict[str, Any]:
@@ -726,7 +947,7 @@ def rebuild_project_memory(root: Path, project: str) -> Path:
     }
     path = project_context_dir(root, safe_project) / "project_memory.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(memory, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(memory, ensure_ascii=False, indent=2) + "\n")
     return path
 
 
@@ -737,10 +958,9 @@ def export_lessons(root: Path, project: str, output: Path | None = None) -> Path
         output = project_context_exports_dir(root, safe_project) / f"lessons-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jsonl"
     else:
         output.parent.mkdir(parents=True, exist_ok=True)
-    with context_connection(root, safe_project) as conn, output.open("w", encoding="utf-8") as file:
+    with context_connection(root, safe_project) as conn:
         rows = conn.execute("select * from lessons where project = ? order by created_at", (safe_project,)).fetchall()
-        for row in rows:
-            file.write(dumps(row_to_lesson(row)) + "\n")
+    atomic_write_text(output, "".join(dumps(row_to_lesson(row)) + "\n" for row in rows))
     return output
 
 
@@ -773,34 +993,215 @@ def save_context_pack(root: Path, project: str, pack: dict[str, Any], actor: str
     payload.setdefault("excluded_lesson_ids", [])
     project_context_packs_dir(root, project).mkdir(parents=True, exist_ok=True)
     with context_connection(root, project) as conn:
-        conn.execute(
-            """
-            insert or replace into context_packs(
-                id, task_id, task_type, project, model, model_context_window, context_budget,
-                used_tokens, reserve_output_tokens, included_lesson_ids, excluded_lesson_ids,
-                final_prompt_hash, created_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload["id"],
-                payload.get("task_id", ""),
-                payload.get("task_type", ""),
-                payload["project"],
-                payload.get("model", ""),
-                payload.get("model_context_window"),
-                int(payload.get("context_budget", 0)),
-                int(payload.get("used_tokens", 0)),
-                payload.get("reserve_output_tokens"),
-                dumps(payload.get("included_lesson_ids", [])),
-                dumps(payload.get("excluded_lesson_ids", [])),
-                payload.get("final_prompt_hash", ""),
-                payload["created_at"],
-            ),
-        )
+        upsert_context_pack_record(conn, payload)
         audit(conn, "context_injected", "context_pack", payload["id"], payload["project"], actor, {"task_type": payload.get("task_type", "")})
     pack_file = project_context_packs_dir(root, project) / f"{payload['id']}.json"
-    pack_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(pack_file, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    retention = context_pack_retention(root)
+    prune_context_packs(
+        root,
+        project,
+        max_records=retention["max_records"],
+        max_age_days=retention["max_age_days"],
+        remove_orphan_files=retention["remove_orphan_files"],
+        repair_missing_files=retention["repair_missing_files"],
+    )
     return str(payload["id"])
+
+
+def upsert_context_pack_record(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+    conn.execute(
+        """
+        insert or replace into context_packs(
+            id, task_id, task_type, project, model, model_context_window, context_budget,
+            used_tokens, reserve_output_tokens, included_lesson_ids, excluded_lesson_ids,
+            final_prompt_hash, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload["id"],
+            payload.get("task_id", ""),
+            payload.get("task_type", ""),
+            payload["project"],
+            payload.get("model", ""),
+            payload.get("model_context_window"),
+            int(payload.get("context_budget", 0)),
+            int(payload.get("used_tokens", 0)),
+            payload.get("reserve_output_tokens"),
+            dumps(payload.get("included_lesson_ids", [])),
+            dumps(payload.get("excluded_lesson_ids", [])),
+            payload.get("final_prompt_hash", ""),
+            payload["created_at"],
+        ),
+    )
+
+
+def context_pack_retention(root: Path) -> dict[str, Any]:
+    from ai_apitest.core.config import load_config
+
+    configured = (
+        load_config(root)
+        .get("context", {})
+        .get("retention", {})
+        .get("context_packs", {})
+    )
+    return {
+        "max_records": max(1, int(configured.get("max_records", 500))),
+        "max_age_days": max(0, int(configured.get("max_age_days", 90))),
+        "remove_orphan_files": bool(configured.get("remove_orphan_files", True)),
+        "repair_missing_files": bool(configured.get("repair_missing_files", True)),
+    }
+
+
+def prune_context_packs(
+    root: Path,
+    project: str,
+    *,
+    max_records: int = 500,
+    max_age_days: int = 90,
+    remove_orphan_files: bool = True,
+    repair_missing_files: bool = True,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    safe_project = safe_project_name(project)
+    max_records = max(1, int(max_records))
+    max_age_days = max(0, int(max_age_days))
+    cutoff = datetime.now() - timedelta(days=max_age_days) if max_age_days else None
+    packs_dir = project_context_packs_dir(root, safe_project)
+    packs_dir.mkdir(parents=True, exist_ok=True)
+    orphan_files = 0
+    importable_files = 0
+    imported_files = 0
+    invalid_orphan_ids: set[str] = set()
+    importable_ids: set[str] = set()
+    importable_payloads: list[dict[str, Any]] = []
+    with context_connection(root, safe_project) as conn:
+        database_ids = {
+            str(row["id"])
+            for row in conn.execute("select id from context_packs where project = ?", (safe_project,)).fetchall()
+        }
+        for path in packs_dir.glob("pack-*.json"):
+            if path.stem in database_ids:
+                continue
+            orphan_files += 1
+            payload = load_context_pack_file(path, safe_project)
+            if payload is None:
+                invalid_orphan_ids.add(path.stem)
+                continue
+            importable_files += 1
+            importable_ids.add(path.stem)
+            importable_payloads.append(payload)
+            if not dry_run:
+                upsert_context_pack_record(conn, payload)
+                imported_files += 1
+        if imported_files:
+            audit(
+                conn,
+                "context_pack_files_reconciled",
+                "context_pack",
+                safe_project,
+                safe_project,
+                "system",
+                {"imported": imported_files},
+            )
+        rows: list[Any] = list(conn.execute(
+            "select * from context_packs where project = ? order by created_at desc, id desc",
+            (safe_project,),
+        ).fetchall())
+        if dry_run and importable_payloads:
+            rows.extend(importable_payloads)
+            rows.sort(key=lambda row: (str(row["created_at"]), str(row["id"])), reverse=True)
+        delete_ids: set[str] = set()
+        for index, row in enumerate(rows):
+            created_at = parse_datetime(str(row["created_at"] or ""))
+            if index >= max_records or (cutoff is not None and created_at is not None and created_at < cutoff):
+                delete_ids.add(str(row["id"]))
+        if delete_ids and not dry_run:
+            conn.executemany(
+                "delete from context_packs where project = ? and id = ?",
+                [(safe_project, pack_id) for pack_id in sorted(delete_ids)],
+            )
+            audit(
+                conn,
+                "context_packs_pruned",
+                "context_pack",
+                safe_project,
+                safe_project,
+                "system",
+                {"deleted": len(delete_ids), "max_records": max_records, "max_age_days": max_age_days},
+            )
+        retained_rows = {str(row["id"]): row for row in rows if str(row["id"]) not in delete_ids}
+        retained_ids = set(retained_rows)
+
+    removed_files = 0
+    missing_files = 0
+    repaired_files = 0
+    for pack_id in delete_ids:
+        path = packs_dir / f"{pack_id}.json"
+        if path.exists():
+            removed_files += 1
+            if not dry_run:
+                path.unlink()
+    if remove_orphan_files:
+        for path in packs_dir.glob("pack-*.json"):
+            if path.stem in retained_ids or path.stem in delete_ids or path.stem in importable_ids:
+                continue
+            if path.stem not in invalid_orphan_ids:
+                continue
+            if not dry_run:
+                path.unlink()
+    for pack_id in retained_ids:
+        path = packs_dir / f"{pack_id}.json"
+        if not path.exists():
+            missing_files += 1
+            if repair_missing_files:
+                repaired_files += 1
+                if not dry_run:
+                    payload = pack_from_row(retained_rows[pack_id])
+                    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return {
+        "database_records": len(rows),
+        "deleted_records": len(delete_ids),
+        "deleted_files": removed_files,
+        "orphan_files": orphan_files,
+        "importable_files": importable_files,
+        "imported_files": imported_files,
+        "missing_files": missing_files,
+        "repaired_files": repaired_files,
+    }
+
+
+def load_context_pack_file(path: Path, project: str) -> dict[str, Any] | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict) or not raw.get("task_type") or not raw.get("created_at"):
+        return None
+    payload = dict(raw)
+    payload["id"] = path.stem
+    payload["project"] = safe_project_name(str(payload.get("project") or project))
+    if payload["project"] != project:
+        return None
+    payload.setdefault("task_id", "")
+    payload.setdefault("model", "")
+    try:
+        payload["context_budget"] = int(payload.get("context_budget", 0))
+        payload["used_tokens"] = int(payload.get("used_tokens", 0))
+    except (TypeError, ValueError):
+        return None
+    if parse_datetime(str(payload["created_at"])) is None:
+        return None
+    payload.setdefault("included_lesson_ids", [])
+    payload.setdefault("excluded_lesson_ids", [])
+    return payload
+
+
+def parse_datetime(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def list_context_packs(root: Path, project: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -1291,7 +1692,20 @@ def mark_lessons_for_endpoint_changes(root: Path, project: str, changed_keys: li
 
 
 def record_case_generation_lessons(root: Path, project: str, cases: list[TestCase], actor: str = "system") -> dict[str, int]:
-    counts = {"created": 0, "merged": 0}
+    counts = {"created": 0, "merged": 0, "unchanged": 0}
+    safe_project = safe_project_name(project)
+    with context_connection(root, safe_project) as conn:
+        existing = {
+            (str(row["source"]), str(row["content"]))
+            for row in conn.execute(
+                """
+                select source, content from lessons
+                where project = ? and source_type = 'case_generation'
+                  and lifecycle_status in ('active', 'pending', 'reopened')
+                """,
+                (safe_project,),
+            ).fetchall()
+        }
     seen: set[tuple[str, str, str]] = set()
     for case in cases:
         if not case.expected_result or not case.assertions:
@@ -1300,6 +1714,10 @@ def record_case_generation_lessons(root: Path, project: str, cases: list[TestCas
         if key in seen:
             continue
         seen.add(key)
+        content = case_generation_lesson_content(case)
+        if (case.id, content) in existing:
+            counts["unchanged"] += 1
+            continue
         result = upsert_lesson(
             root,
             project,
@@ -1309,8 +1727,12 @@ def record_case_generation_lessons(root: Path, project: str, cases: list[TestCas
                 "path": case.path,
                 "lesson_type": "assertion_pattern",
                 "lesson_subtype": case.design_method,
-                "title": f"{case.title} 的断言经验",
-                "content": case_generation_lesson_content(case),
+                "title": artifact_text(
+                    "assertion_knowledge_title",
+                    current_artifact_language(),
+                    title=case.title,
+                ),
+                "content": content,
                 "source": case.id,
                 "source_type": "case_generation",
                 "confidence": "medium",
@@ -1328,7 +1750,8 @@ def record_case_generation_lessons(root: Path, project: str, cases: list[TestCas
 
 
 def case_generation_lesson_content(case: TestCase) -> str:
-    assertions = "; ".join(describe_assertion(assertion) for assertion in case.assertions) or "无结构化断言"
+    language = current_artifact_language()
+    assertions = "; ".join(describe_assertion(assertion) for assertion in case.assertions) or artifact_text("no_structured_assertions", language)
     inputs = []
     if case.path_params:
         inputs.append(f"path_params={json.dumps(case.path_params, ensure_ascii=False, sort_keys=True)}")
@@ -1336,12 +1759,16 @@ def case_generation_lesson_content(case: TestCase) -> str:
         inputs.append(f"query={json.dumps(case.query, ensure_ascii=False, sort_keys=True)}")
     if case.body is not None:
         inputs.append(f"body={json.dumps(case.body, ensure_ascii=False, sort_keys=True)}")
-    input_text = "；".join(inputs) if inputs else "无显式输入数据"
-    return (
-        f"{case.method} {case.path} 的 {case.design_method} 用例预期：{case.expected_result}。"
-        f"具体断言模式：{assertions}。"
-        f"测试数据模式：{input_text}。"
-        "后续生成同接口同场景用例时应复用这些具体断言和业务预期，避免生成不符合接口文档的状态码或字段断言。"
+    input_text = "; ".join(inputs) if inputs else artifact_text("no_explicit_input", language)
+    return artifact_text(
+        "case_assertion_knowledge",
+        language,
+        method=case.method,
+        path=case.path,
+        design_method=case.design_method,
+        expected=case.expected_result,
+        assertions=assertions,
+        inputs=input_text,
     )
 
 
@@ -1429,6 +1856,41 @@ def due_extraction_jobs(root: Path, project: str, limit: int = 10) -> list[dict[
             data["payload"] = loads_json(data.get("payload"), {})
             jobs.append(data)
         return jobs
+
+
+def claim_due_extraction_jobs(root: Path, project: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Atomically claim retry jobs so multiple Web processes cannot repeat them."""
+    safe_project = safe_project_name(project)
+    timestamp = now_iso()
+    with context_connection(root, safe_project) as conn:
+        conn.execute("begin immediate")
+        rows = conn.execute(
+            """
+            select * from extraction_jobs
+            where project = ? and status = 'failed'
+              and retry_count < max_retries
+              and (next_retry_at is null or next_retry_at <= ?)
+            order by created_at limit ?
+            """,
+            (safe_project, timestamp, max(1, int(limit))),
+        ).fetchall()
+        claimed: list[dict[str, Any]] = []
+        for row in rows:
+            cursor = conn.execute(
+                """
+                update extraction_jobs set status = 'running', updated_at = ?
+                where project = ? and id = ? and status = 'failed'
+                """,
+                (timestamp, safe_project, row["id"]),
+            )
+            if not cursor.rowcount:
+                continue
+            data = dict(row)
+            data["status"] = "running"
+            data["payload"] = loads_json(data.get("payload"), {})
+            claimed.append(data)
+            audit(conn, "extraction_running", "extraction_job", str(row["id"]), safe_project, "system", {})
+        return claimed
 
 
 def mark_extraction_job_running(root: Path, project: str, job_id: str) -> bool:

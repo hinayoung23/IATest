@@ -6,6 +6,7 @@
     <div><dt>Base URL</dt><dd>{{BASE_URL}}</dd></div>
     <div><dt>Model</dt><dd>{{MODEL}}</dd></div>
     <div><dt>API Key</dt><dd>{{API_KEY_DISPLAY}}</dd></div>
+    <div><dt>工具调用</dt><dd>{{TOOLS_STATUS}}</dd></div>
   </dl>
   <div class="card-actions">
     <button type="button" onclick="document.getElementById('{{DIALOG_ID}}').showModal()">修改</button>
@@ -26,6 +27,7 @@
       <label>Provider<select name="provider">{{PROVIDER_OPTIONS}}</select></label>
       <label>Base URL<input name="base_url" value="{{BASE_URL_VALUE}}"></label>
       <label>Model<input name="model" value="{{MODEL_VALUE}}"></label>
+      <label><input type="checkbox" name="supports_tools" {{SUPPORTS_TOOLS_CHECKED}}> Provider 支持原生工具调用</label>
       <label>API Key 或环境变量名
         <div class="api-key-control">
           <input type="text" name="api_key_env" value="" placeholder="{{API_KEY_PLACEHOLDER}}" data-secret-input>

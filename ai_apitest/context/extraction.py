@@ -7,17 +7,17 @@ from typing import Any
 
 from ai_apitest.context.storage import (
     apply_known_issue_updates,
+    claim_due_extraction_jobs,
     create_extraction_job,
-    due_extraction_jobs,
     mark_extraction_job_completed,
     mark_extraction_job_failed,
-    mark_extraction_job_running,
     upsert_lesson,
 )
 from ai_apitest.core.paths import safe_project_name
+from ai_apitest.core.observability import record_operational_error
 
-LESSONS_BLOCK = "aitest-lessons-json"
-KNOWN_ISSUES_BLOCK = "aitest-known-issues-json"
+LESSONS_BLOCK = "iatest-lessons-json"
+KNOWN_ISSUES_BLOCK = "iatest-known-issues-json"
 
 
 def process_report_analysis(
@@ -44,28 +44,30 @@ def process_report_analysis(
     except Exception as exc:
         summary["error"] = f"经验提取失败：{exc}"
         if record_job:
+            retryable = bool(llm and llm.get("base_url") and llm.get("model") and llm.get("api_key_env"))
             summary["extraction_job_id"] = create_extraction_job(
                 root,
                 project,
                 trigger="report_analysis",
                 source=source,
-                status="permanent_failed",
+                status="failed" if retryable else "permanent_failed",
                 error=str(exc),
-                max_retries=0,
+                max_retries=3 if retryable else 0,
                 payload={"analysis": analysis, "environment": environment},
             )
         return visible, summary
     if not isinstance(lessons, list):
-        summary["error"] = "aitest-lessons-json 不是数组"
+        summary["error"] = "iatest-lessons-json 不是数组"
         if record_job:
+            retryable = bool(llm and llm.get("base_url") and llm.get("model") and llm.get("api_key_env"))
             summary["extraction_job_id"] = create_extraction_job(
                 root,
                 project,
                 trigger="report_analysis",
                 source=source,
-                status="permanent_failed",
+                status="failed" if retryable else "permanent_failed",
                 error=summary["error"],
-                max_retries=0,
+                max_retries=3 if retryable else 0,
                 payload={"analysis": analysis, "environment": environment},
             )
         return visible, summary
@@ -87,8 +89,8 @@ def process_report_analysis(
         if isinstance(issue_updates, list):
             update_summary = apply_known_issue_updates(root, project, [item for item in issue_updates if isinstance(item, dict)])
             summary["known_issue_updates"] = update_summary["updated"]
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="context_extraction", operation="known_issue_updates", error=exc)
     if record_job:
         create_extraction_job(root, project, trigger="report_analysis", source=source, status="completed")
     return visible, summary
@@ -96,7 +98,7 @@ def process_report_analysis(
 
 def retry_due_report_extractions(root: Path, project: str, limit: int = 10) -> dict[str, int]:
     summary = {"retried": 0, "completed": 0, "failed": 0, "permanent_failed": 0, "skipped": 0}
-    for job in due_extraction_jobs(root, project, limit=limit):
+    for job in claim_due_extraction_jobs(root, project, limit=limit):
         summary["retried"] += 1
         payload = job.get("payload") or {}
         analysis = str(payload.get("analysis") or "")
@@ -104,8 +106,9 @@ def retry_due_report_extractions(root: Path, project: str, limit: int = 10) -> d
             mark_extraction_job_failed(root, project, job["id"], "缺少可重试的报告分析 payload")
             summary["failed"] += 1
             continue
-        mark_extraction_job_running(root, project, job["id"])
         try:
+            from ai_apitest.ai.workflows import configured_llm
+
             _, result = process_report_analysis(
                 root,
                 project,
@@ -113,8 +116,17 @@ def retry_due_report_extractions(root: Path, project: str, limit: int = 10) -> d
                 source=str(job.get("source") or ""),
                 environment=str(payload.get("environment") or ""),
                 record_job=False,
+                llm=configured_llm(root, "analyzer"),
             )
         except Exception as exc:  # pragma: no cover - defensive retry boundary
+            record_operational_error(
+                root,
+                project,
+                component="context_extraction",
+                operation="retry_report_extraction",
+                error=exc,
+                detail={"job_id": job["id"]},
+            )
             mark_extraction_job_failed(root, project, job["id"], str(exc))
             summary["failed"] += 1
             continue
@@ -245,5 +257,5 @@ def extract_json_block(text: str, language: str) -> Any:
 
 
 def strip_context_blocks(text: str) -> str:
-    stripped = re.sub(r"```(?:aitest-lessons-json|aitest-known-issues-json)\s*.*?```", "", text, flags=re.DOTALL)
+    stripped = re.sub(r"```(?:iatest-lessons-json|iatest-known-issues-json)\s*.*?```", "", text, flags=re.DOTALL)
     return re.sub(r"\n{3,}", "\n\n", stripped).strip()

@@ -14,6 +14,10 @@ class Endpoint:
     request_body: dict[str, Any] | None = None
     responses: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
+    operation_id: str = ""
+    deprecated: bool = False
+    security: list[dict[str, Any]] = field(default_factory=list)
+    business_rules: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -29,9 +33,10 @@ class TestStep:
     name: str
     method: str
     path: str
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, Any] = field(default_factory=dict)
     path_params: dict[str, Any] = field(default_factory=dict)
     query: dict[str, Any] = field(default_factory=dict)
+    parameter_serialization: dict[str, dict[str, Any]] = field(default_factory=dict)
     body: Any = None
     assertions: list[Assertion] = field(default_factory=list)
     extract: dict[str, str] = field(default_factory=dict)
@@ -46,9 +51,10 @@ class TestCase:
     priority: str = "P1"
     tags: list[str] = field(default_factory=list)
     design_method: str = "happy_path"
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, Any] = field(default_factory=dict)
     path_params: dict[str, Any] = field(default_factory=dict)
     query: dict[str, Any] = field(default_factory=dict)
+    parameter_serialization: dict[str, dict[str, Any]] = field(default_factory=dict)
     body: Any = None
     assertions: list[Assertion] = field(default_factory=list)
     source: str = ""
@@ -62,6 +68,9 @@ class TestCase:
     steps: list[TestStep] = field(default_factory=list)
     cleanup_steps: list[TestStep] = field(default_factory=list)
     scenario_id: str = ""
+    rule_ids: list[str] = field(default_factory=list)
+    coverage_partition_ids: list[str] = field(default_factory=list)
+    fixture_requirements: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

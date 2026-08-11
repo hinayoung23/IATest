@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
-from ai_apitest.core.config import load_config
+from ai_apitest.core.config import load_config, save_config
 from ai_apitest.core.models import Assertion, CaseResult, Endpoint, TestCase as ApiTestCase, TestStep as ApiTestStep
-from ai_apitest.core.serde import assertion_from_dict, case_from_dict
+from ai_apitest.core.paths import project_coverage_manifest_file, project_docs_file, project_reports_dir
+from ai_apitest.core.serde import assertion_from_dict, case_from_dict, to_jsonable, write_json
 from ai_apitest.ai.case_generation import supplement_user_prompt, user_prompt, validate_cases
 from ai_apitest.ai.workflows import dedupe_supplemental_cases
-from ai_apitest.context.injection import build_context_bundle
+from ai_apitest.context.injection import build_context_bundle, calculate_injection_budget
 from ai_apitest.context.extraction import process_report_analysis, retry_due_report_extractions
 from ai_apitest.context.signatures import is_contradictory
 from ai_apitest.context.storage import (
@@ -44,11 +46,30 @@ from ai_apitest.context.storage import (
 from ai_apitest.ai.conflict_review import parse_conflict_review_response
 from ai_apitest.context.dependencies import infer_dependency_candidates, verify_dependency_candidates
 from ai_apitest.execution.assertions import evaluate
-from ai_apitest.execution.runner import apply_path_params, execute_step, run_case, run_cases, run_environment_setup, run_ordered_cases
-from ai_apitest.generator.cases import generate_cases, save_cases
+from ai_apitest.execution.runner import (
+    EndpointRateLimit,
+    RequestRateLimiter,
+    apply_path_params,
+    execute_step,
+    parse_documented_rate_limit,
+    run_case,
+    run_cases,
+    run_environment_setup,
+    run_ordered_cases,
+)
+from ai_apitest.execution.fixtures import FixtureManager, case_is_executable
+from ai_apitest.generator.cases import attach_setup_steps, generate_cases, load_cases_from_markdown, save_cases
+from ai_apitest.mock_server import (
+    MockState,
+    match_route_path,
+    render_mock_template,
+    request_matches,
+    response_context,
+    validate_mock_routes,
+)
 from ai_apitest.orchestrator.maintainer.change_detector import diff_endpoints
 from ai_apitest.orchestrator.scheduler.runner import natural_language_to_cron
-from ai_apitest.web.server import display_message_for_tasks, inline_md, is_safe_report_name, page, render_audit_rows, render_case_detail_modal, render_conflict_groups, render_endpoint_modals, render_lesson_cards, render_supplement_form, render_trend_overview
+from ai_apitest.web.server import display_message_for_tasks, handle_action, inline_md, is_safe_report_name, page, render_audit_rows, render_case_detail_modal, render_cases, render_config, render_conflict_groups, render_context, render_context_pack_panel, render_endpoint_modals, render_lesson_cards, render_reports, render_supplement_form, render_trend_overview, stop_web_mock_service, web_mock_status
 
 
 def test_json_path_target_and_operator_are_normalized() -> None:
@@ -67,6 +88,22 @@ def test_order_assertion_with_missing_value_fails_cleanly() -> None:
     failure = evaluate(assertion, response)
     assert failure
     assert "实际值 None" in failure
+
+
+def test_approximate_numeric_assertion_supports_explicit_or_default_tolerance() -> None:
+    assert evaluate(
+        Assertion(type="json_path", target="$.expires_in", operator="approx_eq", expected=600),
+        {"json": {"expires_in": 597}, "status_code": 200, "headers": {}, "text": ""},
+    ) is None
+    assert evaluate(
+        Assertion(
+            type="json_path",
+            target="$.expires_in",
+            operator="approx_eq",
+            expected={"value": 600, "tolerance": 1},
+        ),
+        {"json": {"expires_in": 597}, "status_code": 200, "headers": {}, "text": ""},
+    ) is not None
 
 
 def test_path_params_are_not_double_encoded() -> None:
@@ -88,6 +125,77 @@ def test_http_5xx_fails_without_status_assertion() -> None:
     )
     assert result["status"] == "failed"
     assert "HTTP 500" in result["error"]
+
+
+def test_documented_rate_limit_is_parsed_from_endpoint_response() -> None:
+    endpoint = Endpoint(
+        method="GET",
+        path="/api/generate",
+        responses={"429": {"description": "同一 IP 在 60 秒内创建邮箱超过 10 次"}},
+    )
+
+    assert parse_documented_rate_limit(endpoint) == EndpointRateLimit("GET", "/api/generate", 10, 60)
+
+
+def test_rate_limiter_enforces_shared_sliding_window_without_real_sleep() -> None:
+    now = [0.0]
+    waits: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        waits.append(seconds)
+        now[0] += seconds
+
+    limiter = RequestRateLimiter(
+        [EndpointRateLimit("GET", "/api/generate", 2, 60)],
+        clock=lambda: now[0],
+        sleeper=sleep,
+    )
+
+    assert limiter.acquire("GET", "/api/generate") == 0
+    assert limiter.acquire("GET", "/api/generate") == 0
+    assert limiter.acquire("GET", "/api/generate") == 60
+    assert waits == [60]
+
+
+def test_unexpected_429_waits_and_retries_with_documented_policy() -> None:
+    now = [0.0]
+    calls = 0
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, json={"detail": "too many requests"})
+        return httpx.Response(200, json={"email": "prepared@mail.tempbox.cn"})
+
+    limiter = RequestRateLimiter(
+        [EndpointRateLimit("GET", "/api/generate", 10, 60)],
+        clock=lambda: now[0],
+        sleeper=sleep,
+    )
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    result = execute_step(
+        ApiTestStep(
+            name="生成邮箱",
+            method="GET",
+            path="/api/generate",
+            assertions=[Assertion(type="status_code", operator="eq", expected=200)],
+        ),
+        {"base_url": "http://testserver", "headers": {}},
+        {"execution": {"rate_limit_max_retries": 1}},
+        {},
+        client,
+        rate_limiter=limiter,
+    )
+
+    assert result["status"] == "passed"
+    assert result["request"]["attempts"] == 2
+    assert result["request"]["rate_limit_wait_ms"] == 60_000
+    assert result["request"]["rate_limit_events"] == [{"attempt": 1, "status_code": 429, "wait_seconds": 60.0}]
+    assert calls == 2
 
 
 def test_cleanup_steps_run_after_case_and_use_response_context() -> None:
@@ -124,6 +232,210 @@ def test_cleanup_steps_run_after_case_and_use_response_context() -> None:
     assert result.status == "passed"
     assert result.cleanup["status"] == "passed"
     assert calls == [("GET", "/api/generate"), ("DELETE", "/api/delete/demo@mail.tempbox.cn")]
+
+
+def test_static_fixture_provider_makes_contract_case_executable() -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(422, json={"detail": "restricted"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    case = ApiTestCase(
+        id="TC-FIXTURE-0001",
+        title="受限前缀被拒绝",
+        method="GET",
+        path="/api/generate",
+        query={"prefix": "{{prefix}}"},
+        assertions=[Assertion(type="status_code", operator="eq", expected=422)],
+        runnable=False,
+        risk="fixture_required",
+        fixture_requirements=["restricted_prefix"],
+    )
+    config = {
+        "execution": {},
+        "fixtures": {
+            "providers": {
+                "restricted_prefix": {
+                    "enabled": True,
+                    "type": "static",
+                    "values": {"prefix": "admin"},
+                }
+            }
+        },
+    }
+
+    assert case_is_executable(case, config) is True
+    result = run_case(
+        case,
+        {"base_url": "http://service.test", "headers": {}},
+        config,
+        client,
+        fixture_manager=FixtureManager(config, client),
+    )
+
+    assert result.status == "passed"
+    assert calls == ["/api/generate"]
+    assert result.request["url"].endswith("/api/generate?prefix=admin")
+    assert result.setup["external_capability_setup"]["status"] == "passed"
+
+
+def test_http_fixture_provider_prepares_injects_and_cleans_up() -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.host, request.url.path))
+        if request.url.host == "fixture.test" and request.url.path == "/prepare":
+            return httpx.Response(201, json={"email": "prepared@mail.test", "fixture_token": "token-1"})
+        if request.url.host == "fixture.test" and request.url.path == "/cleanup":
+            assert json.loads(request.content) == {"token": "token-1"}
+            return httpx.Response(204)
+        if request.url.host == "service.test" and request.url.path == "/messages/prepared@mail.test":
+            return httpx.Response(200, json=[])
+        return httpx.Response(404)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    case = ApiTestCase(
+        id="TC-FIXTURE-0002",
+        title="受控邮件查询",
+        method="GET",
+        path="/messages/{email}",
+        path_params={"email": "{{email}}"},
+        assertions=[Assertion(type="status_code", operator="eq", expected=200)],
+        runnable=False,
+        risk="fixture_required",
+        fixture_requirements=["mail_injection"],
+    )
+    config = {
+        "execution": {"fail_on_cleanup_error": True},
+        "fixtures": {
+            "providers": {
+                "mail_injection": {
+                    "enabled": True,
+                    "type": "http",
+                    "prepare": {
+                        "method": "POST",
+                        "url": "http://fixture.test/prepare",
+                        "expected_status": 201,
+                        "extract": {
+                            "email": "$.email",
+                            "fixture_token": "$.fixture_token",
+                        },
+                    },
+                    "cleanup": {
+                        "method": "POST",
+                        "url": "http://fixture.test/cleanup",
+                        "json": {"token": "{{fixture_token}}"},
+                        "expected_status": 204,
+                    },
+                }
+            }
+        },
+    }
+
+    result = run_case(
+        case,
+        {"base_url": "http://service.test", "headers": {}},
+        config,
+        client,
+        fixture_manager=FixtureManager(config, client),
+    )
+
+    assert result.status == "passed"
+    assert calls == [
+        ("POST", "fixture.test", "/prepare"),
+        ("GET", "service.test", "/messages/prepared@mail.test"),
+        ("POST", "fixture.test", "/cleanup"),
+    ]
+    assert result.cleanup["external_capability_cleanup"]["status"] == "passed"
+    assert result.setup["external_capability_setup"]["steps"][0]["injected_variables"] == [
+        "email",
+        "fixture_token",
+    ]
+
+
+def test_mock_server_matches_request_templates_and_sequences() -> None:
+    routes = validate_mock_routes(
+        [
+            {
+                "name": "用户异常响应",
+                "method": "GET",
+                "path": "/upstream/users/{user_id}",
+                "match": {"query": {"mode": "failure"}},
+                "responses": [
+                    {"status": 503, "body": {"attempt": 1}},
+                    {"status": 200, "body": {"user": "{{user_id}}", "mode": "{{mode}}"}},
+                ],
+            }
+        ]
+    )
+    route = routes[0]
+    path_params = match_route_path(route["path"], "/upstream/users/alice")
+    query = {"mode": ["failure"]}
+
+    assert path_params == {"user_id": "alice"}
+    assert request_matches(route["match"], query, {}, None, b"") is True
+    assert request_matches(route["match"], {"mode": ["success"]}, {}, None, b"") is False
+
+    state = MockState(routes)
+    first = state.next_response(0, route)
+    second = state.next_response(0, route)
+    context = response_context("GET", "/upstream/users/alice", path_params, query, None)
+
+    assert first["status"] == 503
+    assert render_mock_template(second["body"], context) == {
+        "user": "alice",
+        "mode": "failure",
+    }
+    state.record({"route": "用户异常响应"})
+    assert state.requests == [{"route": "用户异常响应"}]
+    state.reset()
+    assert state.requests == []
+    assert state.route_calls == {}
+
+
+def test_chain_report_context_excludes_cleanup_response_fields() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/generate":
+            return httpx.Response(200, json={"email": "demo@mail.tempbox.cn"})
+        if request.url.path == "/api/delete/demo@mail.tempbox.cn":
+            return httpx.Response(200, json={"status": "ok", "message": "Mailbox deleted"})
+        return httpx.Response(404, json={"detail": "not found"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    case = ApiTestCase(
+        id="TC-CHAIN-CONTEXT",
+        title="生成后清理",
+        method="CHAIN",
+        path="",
+        steps=[
+            ApiTestStep(
+                name="生成邮箱",
+                method="GET",
+                path="/api/generate",
+                assertions=[Assertion(type="status_code", operator="eq", expected=200)],
+                extract={"email": "$.email"},
+            )
+        ],
+        cleanup_steps=[
+            ApiTestStep(
+                name="删除邮箱",
+                method="DELETE",
+                path="/api/delete/{email}",
+                path_params={"email": "{{email}}"},
+                assertions=[Assertion(type="status_code", operator="eq", expected=200)],
+            )
+        ],
+    )
+
+    result = run_case(case, {"base_url": "http://testserver", "headers": {}}, {"execution": {}}, client)
+
+    assert result.status == "passed"
+    assert result.cleanup["status"] == "passed"
+    assert result.request["context"]["email"] == "demo@mail.tempbox.cn"
+    assert "message" not in result.request["context"]
+    assert "status" not in result.request["context"]
 
 
 def test_cleanup_runs_even_when_main_assertion_fails() -> None:
@@ -246,6 +558,54 @@ def test_setup_failure_stops_main_request() -> None:
     assert calls == [("GET", "/api/generate")]
 
 
+def test_missing_cleanup_resource_after_upstream_failure_is_not_a_cleanup_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"detail": "generate failed"})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    case = ApiTestCase(
+        id="TC-CHAIN-FAIL",
+        title="生成邮箱后检查状态",
+        method="CHAIN",
+        path="",
+        steps=[
+            ApiTestStep(
+                name="生成邮箱",
+                method="GET",
+                path="/api/generate",
+                assertions=[Assertion(type="status_code", operator="eq", expected=200)],
+                extract={"email": "$.email"},
+            ),
+            ApiTestStep(
+                name="检查邮箱",
+                method="GET",
+                path="/api/check/{email}",
+                path_params={"email": "{{email}}"},
+            ),
+        ],
+        cleanup_steps=[
+            ApiTestStep(
+                name="删除邮箱",
+                method="DELETE",
+                path="/api/delete/{email}",
+                path_params={"email": "{{email}}"},
+            )
+        ],
+    )
+
+    result = run_case(
+        case,
+        {"base_url": "http://testserver", "headers": {}},
+        {"execution": {"fail_on_http_5xx": True, "fail_on_cleanup_error": True}},
+        client,
+    )
+
+    assert result.status == "failed"
+    assert result.cleanup["status"] == "not_needed"
+    assert "测试数据清理失败" not in result.error
+    assert result.cleanup["steps"][0]["status"] == "not_needed"
+
+
 def test_environment_setup_context_is_available_to_cases() -> None:
     calls = []
     seen_auth = []
@@ -337,7 +697,43 @@ def test_generated_consumer_cases_get_setup_and_cleanup_steps() -> None:
 
     assert check_case.setup_steps
     assert check_case.path_params == {"email": "{{email}}"}
+    assert any("{{email}}" in item for item in check_case.test_steps if "替换路径参数" in item)
     assert check_case.cleanup_steps
+
+
+def test_nonexistent_resource_case_uses_unique_absent_value_without_creation_setup() -> None:
+    endpoints = [
+        Endpoint(
+            method="GET",
+            path="/api/generate",
+            summary="生成临时邮箱",
+            responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}},
+        ),
+        Endpoint(
+            method="GET",
+            path="/api/check/{email}",
+            summary="检查邮箱状态",
+            parameters=[{"name": "email", "in": "path", "required": True, "schema": {"type": "string"}}],
+            responses={"200": {}},
+        ),
+    ]
+    case = ApiTestCase(
+        id="TC-ABSENT-001",
+        title="检查不存在的邮箱返回 valid=false",
+        method="GET",
+        path="/api/check/{email}",
+        design_method="equivalence_class",
+        path_params={"email": "test123@mail.tempbox.cn"},
+        assertions=[Assertion(type="status_code", expected=200)],
+        test_steps=["替换路径参数：{'email': 'test123@mail.tempbox.cn'}。"],
+    )
+
+    prepared = attach_setup_steps([case], endpoints)[0]
+
+    assert prepared.setup_steps == []
+    assert prepared.path_params == {"email": "missing_{{uuid}}@invalid.test"}
+    assert "{{uuid}}" in prepared.test_steps[0]
+    assert any("不存在资源" in item for item in prepared.preconditions)
 
 
 def test_cleanup_steps_are_not_added_to_non_producer_cases() -> None:
@@ -381,10 +777,10 @@ def test_full_run_records_non_runnable_cases_as_skipped(tmp_path) -> None:
 
 
 def test_load_config_reads_dotenv(tmp_path) -> None:
-    (tmp_path / ".env").write_text("AITEST_TEST_KEY=secret\n", encoding="utf-8")
-    (tmp_path / "aitest.json").write_text(json.dumps({"llm": {"master": {"api_key_env": "AITEST_TEST_KEY"}}}), encoding="utf-8")
+    (tmp_path / ".env").write_text("IATEST_TEST_KEY=secret\n", encoding="utf-8")
+    (tmp_path / "iatest.json").write_text(json.dumps({"llm": {"master": {"api_key_env": "IATEST_TEST_KEY"}}}), encoding="utf-8")
     config = load_config(tmp_path)
-    assert config["llm"]["master"]["api_key_env"] == "AITEST_TEST_KEY"
+    assert config["llm"]["master"]["api_key_env"] == "IATEST_TEST_KEY"
 
 
 def test_case_generation_includes_new_design_methods() -> None:
@@ -682,6 +1078,8 @@ def test_ai_case_generation_uses_documented_error_response() -> None:
 
 def test_report_name_and_inline_markdown() -> None:
     assert is_safe_report_name("report-20260616-135848.md")
+    assert is_safe_report_name("report-20260718-101936-251782.md")
+    assert not is_safe_report_name("report-20260718-101936-251782-extra.md")
     assert not is_safe_report_name("../passwd")
     html = inline_md("查看 `$.email` 和 **结论**")
     assert "<code>$.email</code>" in html
@@ -720,6 +1118,26 @@ def test_trend_overview_includes_visual_indicator() -> None:
     assert "通过率在上升" in html
     assert "具体发现" in html
     assert "建议动作" in html
+
+
+def test_trend_overview_is_only_displayed_in_reports_not_project_context(tmp_path) -> None:
+    result = CaseResult(
+        case_id="TC-API-001",
+        title="查询项目",
+        status="passed",
+        method="GET",
+        path="/api/items",
+        status_code=200,
+        elapsed_ms=12,
+    )
+    save_execution_trend(tmp_path, "demo", 1, [result], run_scope="full")
+
+    context_html = render_context(tmp_path, "demo", urlparse("/context?project=demo"))
+    reports_html = render_reports(tmp_path, "demo", urlparse("/reports?project=demo"))
+
+    assert "趋势概览" not in context_html
+    assert "section-trend" not in context_html
+    assert "趋势概览" in reports_html
 
 
 def test_trend_case_ids_survive_db_roundtrip_and_jaccard(tmp_path) -> None:
@@ -804,7 +1222,11 @@ def test_governance_config_defaults() -> None:
     from ai_apitest.core.config import DEFAULT_CONFIG
     g = DEFAULT_CONFIG.get("governance", {})
     assert g["enabled"] is True
-    assert len(g) == 1
+    assert g["review_reports"] is True
+    assert g["review_cases"] is True
+    assert g["review_experience_candidates"] is True
+    assert g["low_confidence_requires_manual"] is True
+    assert g["max_candidates_per_batch"] == 10
 
 
 def test_governance_fallback_role() -> None:
@@ -1086,8 +1508,8 @@ def test_embedded_block_repair_flow(monkeypatch) -> None:
     monkeypatch.setattr("ai_apitest.ai.provider.repair_json_output", mock_repair)
 
     result = _extract_block_with_repair(
-        "some markdown ```aitest-lessons-json\n{bad\n``` more text",
-        "aitest-lessons-json",
+        "some markdown ```iatest-lessons-json\n{bad\n``` more text",
+        "iatest-lessons-json",
         {"base_url": "http://x", "model": "m", "api_key_env": "K"},
     )
     assert len(repair_calls) == 1
@@ -1097,7 +1519,7 @@ def test_embedded_block_repair_flow(monkeypatch) -> None:
 
 def test_coverage_gap_detection_chain_missing() -> None:
     from ai_apitest.ai.workflows import _detect_coverage_gaps
-    from ai_apitest.core.models import Endpoint, TestCase
+    from ai_apitest.core.models import Assertion, Endpoint, TestCase
 
     eps = [
         Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
@@ -1225,13 +1647,16 @@ def test_empty_chain_does_not_count_as_covered() -> None:
 
 def test_generate_cases_with_config_rule_fills_critical_gaps(monkeypatch, tmp_path) -> None:
     from ai_apitest.ai import workflows as wf
-    from ai_apitest.core.models import Endpoint, TestCase
+    from ai_apitest.core.models import Assertion, Endpoint, TestCase
 
     eps = [
         Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {}}),
         Endpoint(method="GET", path="/api/check/{email}", summary="检查", parameters=[{"name": "email", "in": "path"}], responses={"200": {}}),
         Endpoint(method="DELETE", path="/api/delete/{email}", summary="删除", parameters=[{"name": "email", "in": "path"}], responses={"200": {}}),
     ]
+    config = load_config(tmp_path)
+    config["agents"]["case_generation_mode"] = "legacy"
+    save_config(tmp_path, config)
     initial = [
         TestCase(
             id="TC-API-0001",
@@ -1272,13 +1697,35 @@ def test_generate_cases_with_config_rule_fills_critical_gaps(monkeypatch, tmp_pa
                 c = TestCase(id=f"TC-CHAIN-001", title=item["title_hint"], method="CHAIN", path="",
                              priority=item["priority"], design_method=item["design_method"],
                              tags=item["coverage_tags"], runnable=True, risk="low",
-                             steps=[TestStep(name="s1", method="GET", path="/api/generate"),
-                                    TestStep(name="s2", method="GET", path="/api/check/{email}")])
+                             expected_result="两个步骤均返回 200",
+                             steps=[
+                                 TestStep(
+                                     name="s1",
+                                     method="GET",
+                                     path="/api/generate",
+                                     assertions=[Assertion(type="status_code", expected=200)],
+                                     extract={"email": "$.email"},
+                                 ),
+                                 TestStep(
+                                     name="s2",
+                                     method="GET",
+                                     path="/api/check/{email}",
+                                     path_params={"email": "{{email}}"},
+                                     assertions=[Assertion(type="status_code", expected=200)],
+                                 ),
+                             ])
             else:
                 c = TestCase(id=f"TC-{item['scenario_id']}", title=item["title_hint"],
                              method=item["endpoint_method"], path=item["endpoint_path"],
                              priority=item["priority"], design_method=item["design_method"],
-                             tags=item["coverage_tags"], runnable=True, risk="low")
+                             tags=item["coverage_tags"], runnable=True, risk="low",
+                             path_params=(
+                                 {"email": "example@example.com"}
+                                 if "{email}" in item["endpoint_path"]
+                                 else {}
+                             ),
+                             assertions=[Assertion(type="status_code", expected=200)],
+                             expected_result="接口返回 200")
             c.scenario_id = item["scenario_id"]
             cases.append(c)
         return cases, ""
@@ -1286,7 +1733,7 @@ def test_generate_cases_with_config_rule_fills_critical_gaps(monkeypatch, tmp_pa
 
     cases, warning = wf.generate_cases_with_config(tmp_path, eps, project="tempbox")
 
-    assert len(cases) >= 3, f"expected at least 3 cases, got {len(cases)}"
+    assert len(cases) >= 3, f"expected at least 3 cases, got {len(cases)}; {warning}"
     assert "plan:" in warning
 
 
@@ -1304,6 +1751,9 @@ def test_generate_cases_with_config_rule_fallback_when_batches_are_empty(monkeyp
         Endpoint(method="GET", path="/api/check/{email}", summary="检查邮箱", parameters=[{"name": "email", "in": "path"}], responses={"200": {}}),
         Endpoint(method="DELETE", path="/api/delete/{email}", summary="删除邮箱", parameters=[{"name": "email", "in": "path"}], responses={"200": {}}),
     ]
+    config = load_config(tmp_path)
+    config["agents"]["case_generation_mode"] = "legacy"
+    save_config(tmp_path, config)
 
     monkeypatch.setattr(wf, "configured_llm", lambda root, role: {"base_url": "x", "model": "m", "api_key_env": "K"})
     monkeypatch.setattr(wf, "is_llm_configured", lambda llm: True)
@@ -1493,6 +1943,9 @@ def test_plan_dm_mismatch_blocks_coverage_pass(monkeypatch, tmp_path) -> None:
     from ai_apitest.core.models import Endpoint, TestCase
 
     eps = [Endpoint(method="GET", path="/api/test", summary="Test")]
+    config = load_config(tmp_path)
+    config["agents"]["case_generation_mode"] = "legacy"
+    save_config(tmp_path, config)
     # Plan: title_hint says 非法格式 but design_method is happy_path
     plan_with_mismatch = [
         {"scenario_id": "SCN-001", "endpoint_method": "GET", "endpoint_path": "/api/test",
@@ -1724,13 +2177,15 @@ def test_dependency_lessons_show_specific_content_and_candidate_state(tmp_path) 
     infer_dependency_candidates(tmp_path, "tempbox", [producer, consumer])
     lessons = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")
     html = render_lesson_cards("tempbox", lessons)
-    assert "数据来源：GET /api/generate 的响应字段 email" in lessons[0]["content"]
-    assert "使用位置：GET /api/check/{email} 的路径参数 email" in lessons[0]["content"]
+    assert "Data source: response fields email from GET /api/generate" in lessons[0]["content"]
+    assert "Usage: path parameter email on GET /api/check/{email}" in lessons[0]["content"]
     assert "候选依赖" in html
     assert "已启用 · 未审核" not in html
 
 
 def test_dependency_lessons_are_grouped_for_display_and_prompt(tmp_path) -> None:
+    from ai_apitest.context.dependencies import update_dependency_status
+
     producer = Endpoint(
         method="GET",
         path="/api/generate",
@@ -1742,6 +2197,7 @@ def test_dependency_lessons_are_grouped_for_display_and_prompt(tmp_path) -> None
     lessons = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")
     for lesson in lessons:
         update_lesson_review(tmp_path, "tempbox", lesson["id"], lifecycle_status="active", review_status="confirmed")
+        update_dependency_status(tmp_path, "tempbox", lesson["id"], "verified", "test_verified", "验收测试确认")
     lessons = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")
 
     html = render_lesson_cards("tempbox", lessons)
@@ -1766,6 +2222,30 @@ def test_dependency_lessons_are_grouped_for_display_and_prompt(tmp_path) -> None
     assert "GET /api/generate 产出的 email 被 2 个接口使用" in bundle.text
     assert set(bundle.included_lesson_ids) == {lesson["id"] for lesson in lessons}
     assert len(bundle.included_lesson_ids) == 2
+
+
+def test_context_injection_uses_task_output_reserve_before_model_default() -> None:
+    budget = calculate_injection_budget(
+        model_config={
+            "context_window": 32000,
+            "default_output_tokens": 12000,
+        },
+        context_config={
+            "injection": {
+                "budgets": {
+                    "case_generation": {
+                        "max_context_ratio": 0.25,
+                        "max_context_tokens": 10000,
+                        "reserve_output_tokens": 2000,
+                    }
+                }
+            }
+        },
+        task_type="case_generation",
+        system_prompt="system",
+        user_prompt_base="user",
+    )
+    assert budget == 7249
 
 
 def test_audit_rows_are_human_readable() -> None:
@@ -1856,14 +2336,226 @@ def test_cases_page_exposes_supplement_case_action() -> None:
     assert "GET /api/generate" in html
 
 
-def test_readonly_detail_modals_do_not_duplicate_close_actions() -> None:
+def test_detail_modals_expose_case_edit_and_delete_actions() -> None:
     endpoint_html = render_endpoint_modals(Endpoint(method="GET", path="/api/generate", summary="生成邮箱"), 0, "tempbox")
     endpoint_detail = endpoint_html.split('<dialog id="endpoint-detail-0"', 1)[1].split("</dialog>", 1)[0]
-    case_html = render_case_detail_modal(ApiTestCase(id="TC-API-0001", title="生成邮箱", method="GET", path="/api/generate"), "case-detail-0")
+    case_html = render_case_detail_modal(
+        ApiTestCase(id="TC-API-0001", title="生成邮箱", method="GET", path="/api/generate"),
+        "case-detail-0",
+        project="tempbox",
+    )
+    case_detail = case_html.split('<dialog id="case-detail-0"', 1)[1].split("</dialog>", 1)[0]
     assert endpoint_detail.count(">关闭</button>") == 1
     assert "<button type=\"button\" onclick=\"document.getElementById('endpoint-detail-0').close(); document.getElementById('endpoint-edit-0').showModal()\">编辑</button>" in endpoint_detail
-    assert case_html.count(">关闭</button>") == 1
-    assert "modal-actions" not in case_html
+    assert case_detail.count(">关闭</button>") == 1
+    assert "编辑用例" in case_detail
+    assert "删除用例" in case_detail
+    assert 'action="/actions/save-case"' in case_html
+    assert 'action="/actions/delete-case"' in case_html
+
+
+def test_case_detail_describes_fixture_requirement_as_project_capability() -> None:
+    case_html = render_case_detail_modal(
+        ApiTestCase(
+            id="TC-API-0001",
+            title="查询历史邮件（依赖项目方提供的外部测试能力）",
+            method="GET",
+            path="/api/messages/{email}",
+            runnable=False,
+            risk="fixture_required",
+            fixture_requirements=["mail_injection"],
+        ),
+        "case-detail-0",
+        project="tempbox",
+    )
+    case_detail = case_html.split('<dialog id="case-detail-0"', 1)[1].split("</dialog>", 1)[0]
+
+    assert "项目方需提供的外部测试能力" in case_detail
+    assert "受控邮件数据投递能力" in case_detail
+    assert "mail_injection" not in case_detail
+    assert "需要测试夹具" not in case_detail
+
+    configured_html = render_case_detail_modal(
+        ApiTestCase(
+            id="TC-API-0001",
+            title="查询历史邮件（依赖项目方提供的外部测试能力）",
+            method="GET",
+            path="/api/messages/{email}",
+            runnable=False,
+            risk="fixture_required",
+            fixture_requirements=["mail_injection"],
+        ),
+        "case-detail-configured",
+        project="tempbox",
+        config={
+            "fixtures": {
+                "providers": {
+                    "mail_injection": {
+                        "enabled": True,
+                        "type": "static",
+                        "values": {"email": "prepared@mail.test"},
+                    }
+                }
+            }
+        },
+    )
+    assert "外部能力已接入，可执行" in configured_html
+    assert "执行时自动准备并清理" in configured_html
+
+
+def test_web_config_saves_fixture_and_mock_settings(tmp_path) -> None:
+    class Handler:
+        def __init__(self) -> None:
+            self.locations = []
+
+        def redirect(self, location: str) -> None:
+            self.locations.append(location)
+
+    handler = Handler()
+    providers = {
+        "restricted_prefix": {
+            "enabled": True,
+            "type": "static",
+            "values": {"prefix": "admin"},
+        }
+    }
+    routes = [
+        {
+            "name": "上游故障",
+            "method": "GET",
+            "path": "/upstream/{id}",
+            "response": {"status": 503, "body": {"id": "{{id}}"}},
+        }
+    ]
+
+    handle_action(
+        tmp_path,
+        "demo",
+        "/actions/save-fixtures",
+        {"timeout_seconds": ["5"], "providers": [json.dumps(providers)]},
+        handler,
+    )
+    handle_action(
+        tmp_path,
+        "demo",
+        "/actions/save-mock",
+        {
+            "host": ["127.0.0.1"],
+            "port": ["8781"],
+            "max_request_bytes": ["4096"],
+            "max_history": ["50"],
+            "routes": [json.dumps(routes)],
+        },
+        handler,
+    )
+
+    config = load_config(tmp_path)
+    assert config["fixtures"]["providers"] == providers
+    assert config["fixtures"]["timeout_seconds"] == 5.0
+    assert config["mock"]["routes"] == routes
+    assert config["mock"]["port"] == 8781
+    page_html = render_config(tmp_path, "demo", type("Parsed", (), {"query": ""})())
+    assert "项目方外部测试能力" in page_html
+    assert "接口 Mock" in page_html
+    assert "iatest mock --project demo" in page_html
+    assert 'action="/actions/toggle-mock"' in page_html
+    assert "已关闭" in page_html
+    assert 'name="port" inputmode="numeric"' in page_html
+    assert 'type="number" name="port"' not in page_html
+    assert 'type="number" name="max_request_bytes"' not in page_html
+    assert 'type="number" name="max_history"' not in page_html
+    assert "单次请求体上限（字节）" in page_html
+    assert "请求记录保留条数" in page_html
+    assert "查看可直接修改的路由 JSON 示例" in page_html
+
+
+def test_web_console_can_start_and_stop_mock_listener(tmp_path) -> None:
+    class Handler:
+        def __init__(self) -> None:
+            self.locations = []
+
+        def redirect(self, location: str) -> None:
+            self.locations.append(location)
+
+    handler = Handler()
+    config = load_config(tmp_path)
+    config["mock"].update(
+        {
+            "host": "127.0.0.1",
+            "port": 0,
+            "routes": [
+                {
+                    "name": "健康测试",
+                    "method": "GET",
+                    "path": "/upstream/health",
+                    "response": {"status": 200, "body": {"ready": True}},
+                }
+            ],
+        }
+    )
+    save_config(tmp_path, config)
+
+    try:
+        handle_action(
+            tmp_path,
+            "demo",
+            "/actions/toggle-mock",
+            {"enabled": ["on"]},
+            handler,
+        )
+        status = web_mock_status(tmp_path)
+        assert status["running"] is True
+        assert status["port"] > 0
+        assert status["route_count"] == 1
+        assert "message=" in handler.locations[-1]
+        response = httpx.get(
+            f"http://127.0.0.1:{status['port']}/upstream/health",
+            timeout=2,
+            trust_env=False,
+        )
+        assert response.status_code == 200
+        assert response.json() == {"ready": True}
+        assert web_mock_status(tmp_path)["running"] is True
+
+        page_html = render_config(tmp_path, "demo", type("Parsed", (), {"query": ""})())
+        assert "监听中" in page_html
+        assert "开启 Mock 端口监听" in page_html
+
+        handle_action(
+            tmp_path,
+            "demo",
+            "/actions/toggle-mock",
+            {},
+            handler,
+        )
+    finally:
+        stop_web_mock_service(tmp_path)
+
+    assert web_mock_status(tmp_path) == {"running": False}
+
+
+def test_agent_runtime_web_is_read_only_and_reports_json_mode_override(tmp_path) -> None:
+    config = load_config(tmp_path)
+    config["agents"]["planner_batch_endpoints"] = 17
+    config["agents"]["semantic_repair_attempts"] = 1
+    config["agents"]["context_recovery"]["soft_ratio"] = 0.45
+    config["agents"]["context_recovery"]["max_rebases"] = 5
+    config["agents"]["governance_mode"] = "legacy"
+    save_config(tmp_path, config)
+
+    page_html = render_config(tmp_path, "demo", type("Parsed", (), {"query": ""})())
+    assert "当前处于部分 Legacy 回滚" in page_html
+    assert "治理执行器" in page_html
+    assert 'action="/actions/save-agent-runtime"' not in page_html
+    assert 'name="governance_mode"' not in page_html
+    assert "agents.governance_mode" in page_html
+
+    updated = load_config(tmp_path)["agents"]
+    assert updated["governance_mode"] == "legacy"
+    assert updated["planner_batch_endpoints"] == 17
+    assert updated["semantic_repair_attempts"] == 1
+    assert updated["context_recovery"]["soft_ratio"] == 0.45
+    assert updated["context_recovery"]["max_rebases"] == 5
 
 
 def test_scheduler_and_maintainer_helpers() -> None:
@@ -2164,6 +2856,195 @@ def test_context_pack_lookup_and_lesson_titles(tmp_path) -> None:
     assert lessons[result.lesson_id]["title"] == "prefix 可选"
 
 
+def test_case_context_panel_hides_internal_ids_and_filters_unrelated_lessons(tmp_path) -> None:
+    relevant = upsert_lesson(
+        tmp_path,
+        "tempbox",
+        {
+            "scope": "endpoint",
+            "method": "GET",
+            "path": "/api/generate",
+            "lesson_type": "business_rule",
+            "title": "省略前缀时随机生成",
+            "content": "不传 prefix 时仍返回有效邮箱。",
+            "source": "manual",
+            "source_type": "manual_edit",
+            "lifecycle_status": "active",
+            "review_status": "confirmed",
+        },
+    )
+    unrelated = upsert_lesson(
+        tmp_path,
+        "tempbox",
+        {
+            "scope": "endpoint",
+            "method": "DELETE",
+            "path": "/api/delete/{email}",
+            "lesson_type": "business_rule",
+            "title": "删除不存在邮箱",
+            "content": "删除不存在邮箱返回 404。",
+            "source": "manual",
+            "source_type": "manual_edit",
+            "lifecycle_status": "active",
+            "review_status": "confirmed",
+        },
+    )
+    save_context_pack(
+        tmp_path,
+        "tempbox",
+        {
+            "task_id": "case-generation-tempbox",
+            "task_type": "case_generation",
+            "model": "demo-model",
+            "context_budget": 1000,
+            "used_tokens": 120,
+            "included_lesson_ids": [relevant.lesson_id, unrelated.lesson_id],
+            "excluded_lesson_ids": [],
+        },
+    )
+    case = ApiTestCase(id="TC-API-0001", title="生成邮箱", method="GET", path="/api/generate")
+    panel = render_context_pack_panel(
+        tmp_path,
+        "tempbox",
+        latest_context_pack(tmp_path, "tempbox", "case_generation"),
+        case=case,
+    )
+
+    assert "省略前缀时随机生成" in panel
+    assert "删除不存在邮箱" not in panel
+    assert "les-" not in panel
+    assert "参考经验</span><strong>1 条" in panel
+    assert "技术审计信息" in panel
+    assert "经验上下文上限" in panel
+    assert "Pack：" not in panel
+
+
+def test_web_case_edit_and_delete_are_persisted_with_quality_validation(tmp_path) -> None:
+    endpoint = Endpoint(method="GET", path="/api/items", responses={"200": {}})
+    write_json(project_docs_file(tmp_path, "demo"), [to_jsonable(endpoint)])
+    case = ApiTestCase(
+        id="TC-API-0001",
+        title="查询项目",
+        method="GET",
+        path="/api/items",
+        assertions=[Assertion(type="status_code", operator="eq", expected=200)],
+        expected_result="返回 200",
+    )
+    save_cases(tmp_path, [case], project="demo")
+
+    class Handler:
+        def __init__(self) -> None:
+            self.locations: list[str] = []
+
+        def redirect(self, location: str) -> None:
+            self.locations.append(location)
+
+    handler = Handler()
+    edit_form = {
+        "case_id": [case.id],
+        "title": ["查询项目（已编辑）"],
+        "priority": ["P0"],
+        "design_method": ["happy_path"],
+        "risk": ["none"],
+        "runnable": ["on"],
+        "negative": [""],
+        "tags": ["smoke, manual"],
+        "preconditions": ["服务可访问"],
+        "test_steps": ["发送查询请求\n校验响应"],
+        "expected_result": ["返回 200"],
+        "request_data": [json.dumps({"method": "GET", "path": "/api/items", "headers": {}, "path_params": {}, "query": {}, "parameter_serialization": {}, "body": None})],
+        "assertions": [json.dumps([{"type": "status_code", "operator": "eq", "expected": 200}])],
+        "setup_steps": ["[]"],
+        "chain_steps": ["[]"],
+        "cleanup_steps": ["[]"],
+    }
+    handle_action(tmp_path, "demo", "/actions/save-case", edit_form, handler)
+    edited = load_cases_from_markdown(tmp_path, "demo")
+    assert len(edited) == 1
+    assert edited[0].title == "查询项目（已编辑）"
+    assert edited[0].priority == "P0"
+    assert edited[0].tags == ["smoke", "manual", "happy_path"]
+    assert "message=" in handler.locations[-1]
+
+    handle_action(tmp_path, "demo", "/actions/delete-case", {"case_id": [case.id]}, handler)
+    assert load_cases_from_markdown(tmp_path, "demo") == []
+    assert "message=" in handler.locations[-1]
+
+
+def test_web_bulk_case_delete_keeps_unselected_cases_and_rebuilds_coverage(tmp_path) -> None:
+    endpoint = Endpoint(method="GET", path="/api/items", responses={"200": {}})
+    write_json(project_docs_file(tmp_path, "demo"), [to_jsonable(endpoint)])
+    cases = [
+        ApiTestCase(id=f"TC-API-000{index}", title=f"查询项目 {index}", method="GET", path="/api/items")
+        for index in range(1, 4)
+    ]
+    save_cases(tmp_path, cases, project="demo")
+
+    class Handler:
+        def __init__(self) -> None:
+            self.locations: list[str] = []
+
+        def redirect(self, location: str) -> None:
+            self.locations.append(location)
+
+    rendered = render_cases(tmp_path, "demo", urlparse("/cases?project=demo"))
+    assert 'action="/actions/delete-cases"' in rendered
+    assert 'data-bulk-select-all="cases"' in rendered
+    assert "name='case_ids' value='TC-API-0001'" in rendered
+
+    handler = Handler()
+    handle_action(
+        tmp_path,
+        "demo",
+        "/actions/delete-cases",
+        {"case_ids": [cases[0].id, cases[2].id, "TC-API-9999"]},
+        handler,
+    )
+
+    assert [case.id for case in load_cases_from_markdown(tmp_path, "demo")] == [cases[1].id]
+    manifest = json.loads(project_coverage_manifest_file(tmp_path, "demo").read_text(encoding="utf-8"))
+    assert manifest["stats"]["case_count"] == 1
+    assert "message=" in handler.locations[-1]
+
+
+def test_web_bulk_report_delete_keeps_unselected_and_rejects_unsafe_names(tmp_path) -> None:
+    reports_dir = project_reports_dir(tmp_path, "demo")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    names = [
+        "report-20260809-120000.md",
+        "report-20260809-120001.md",
+        "report-20260809-120002.md",
+    ]
+    for name in names:
+        (reports_dir / name).write_text("# 测试报告\n\n| 执行用例数 | 3 |\n| 通过 | 2 |\n", encoding="utf-8")
+
+    rendered = render_reports(tmp_path, "demo", urlparse("/reports?project=demo"))
+    assert 'action="/actions/delete-reports"' in rendered
+    assert 'data-bulk-select-all="reports"' in rendered
+    assert f"name='report_names' value='{names[0]}'" in rendered
+
+    class Handler:
+        def __init__(self) -> None:
+            self.locations: list[str] = []
+
+        def redirect(self, location: str) -> None:
+            self.locations.append(location)
+
+    handler = Handler()
+    handle_action(
+        tmp_path,
+        "demo",
+        "/actions/delete-reports",
+        {"report_names": [names[0], names[2], "../passwd"]},
+        handler,
+    )
+
+    assert not (reports_dir / names[0]).exists()
+    assert (reports_dir / names[1]).exists()
+    assert not (reports_dir / names[2]).exists()
+    assert "message=" in handler.locations[-1]
+
+
 def test_context_injection_filters_pending(tmp_path) -> None:
     endpoint = Endpoint(method="GET", path="/api/check/{email}")
     upsert_lesson(
@@ -2221,7 +3102,7 @@ def test_report_analysis_extraction_strips_blocks_and_saves_lessons(tmp_path) ->
 
 存在用例预期问题。
 
-```aitest-lessons-json
+```iatest-lessons-json
 [
   {
     "scope": "endpoint",
@@ -2236,20 +3117,20 @@ def test_report_analysis_extraction_strips_blocks_and_saves_lessons(tmp_path) ->
 ]
 ```
 
-```aitest-known-issues-json
+```iatest-known-issues-json
 []
 ```
 """
     visible, summary = process_report_analysis(tmp_path, "tempbox", analysis, source="report-1.md")
     stats = context_stats(tmp_path, "tempbox")
-    assert "aitest-lessons-json" not in visible
+    assert "iatest-lessons-json" not in visible
     assert summary["lessons_created"] == 1
     assert stats["total_lessons"] == 1
 
 
 def test_report_analysis_ignores_generic_generation_meta_lessons(tmp_path) -> None:
     analysis = """
-```aitest-lessons-json
+```iatest-lessons-json
 [
   {
     "scope": "project",
@@ -2262,7 +3143,7 @@ def test_report_analysis_ignores_generic_generation_meta_lessons(tmp_path) -> No
 ]
 ```
 
-```aitest-known-issues-json
+```iatest-known-issues-json
 []
 ```
 """
@@ -2274,7 +3155,7 @@ def test_report_analysis_ignores_generic_generation_meta_lessons(tmp_path) -> No
 
 def test_report_analysis_keeps_concrete_assertion_pattern_lessons(tmp_path) -> None:
     analysis = """
-```aitest-lessons-json
+```iatest-lessons-json
 [
   {
     "scope": "endpoint",
@@ -2289,7 +3170,7 @@ def test_report_analysis_keeps_concrete_assertion_pattern_lessons(tmp_path) -> N
 ]
 ```
 
-```aitest-known-issues-json
+```iatest-known-issues-json
 []
 ```
 """
@@ -2319,11 +3200,11 @@ def test_report_analysis_applies_known_issue_updates(tmp_path) -> None:
         },
     )
     analysis = f"""
-```aitest-lessons-json
+```iatest-lessons-json
 []
 ```
 
-```aitest-known-issues-json
+```iatest-known-issues-json
 [
   {{"id": "{created.lesson_id}", "lifecycle_status": "resolved_candidate", "reason": "最近报告未复现"}}
 ]
@@ -2433,7 +3314,7 @@ def test_dependency_verification_marks_candidate_verified(tmp_path) -> None:
 
 def test_extraction_retry_reprocesses_saved_payload(tmp_path) -> None:
     analysis = """
-```aitest-lessons-json
+```iatest-lessons-json
 [
   {
     "scope": "project",
@@ -2464,7 +3345,7 @@ def test_extraction_retry_reprocesses_saved_payload(tmp_path) -> None:
 
 def test_invalid_report_analysis_is_not_retryable(tmp_path) -> None:
     analysis = """
-```aitest-lessons-json
+```iatest-lessons-json
 [
   {"title": “中文弯引号导致 JSON 无效”}
 ]
@@ -2482,7 +3363,7 @@ def test_invalid_report_analysis_is_not_retryable(tmp_path) -> None:
 
 def test_extraction_retry_does_not_spawn_new_failed_jobs(tmp_path) -> None:
     bad_analysis = """
-```aitest-lessons-json
+```iatest-lessons-json
 [
   {"title": “中文弯引号导致 JSON 无效”}
 ]

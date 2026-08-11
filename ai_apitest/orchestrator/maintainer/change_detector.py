@@ -27,4 +27,7 @@ def endpoint_signature(endpoint: Endpoint) -> dict:
         "request_body": endpoint.request_body,
         "responses": endpoint.responses,
         "tags": endpoint.tags,
+        "operation_id": endpoint.operation_id,
+        "deprecated": endpoint.deprecated,
+        "security": endpoint.security,
     }

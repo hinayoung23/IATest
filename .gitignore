@@ -1,5 +1,5 @@
 .env
-aitest.json
+iatest.json
 .venv/
 __pycache__/
 *.py[cod]
@@ -7,10 +7,11 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .DS_Store
-.aitest/
+.iatest/
 projects/
 reports/
 api_docs/
+test_cases/
 dist/
 build/
 *.egg

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from ai_apitest.core.case_schema import normalize_test_case
+from ai_apitest.core.files import atomic_write_text
 from ai_apitest.core.models import Assertion, Endpoint, TestCase, TestStep
 
 T = TypeVar("T")
@@ -19,10 +20,7 @@ def read_json(path: Path, default: Any = None) -> Any:
 
 
 def write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
-        file.write("\n")
+    atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def to_jsonable(value: Any) -> Any:
@@ -45,6 +43,10 @@ def endpoint_from_dict(data: dict[str, Any]) -> Endpoint:
         request_body=data.get("request_body"),
         responses=data.get("responses", {}),
         tags=data.get("tags", []),
+        operation_id=data.get("operation_id", ""),
+        deprecated=bool(data.get("deprecated", False)),
+        security=data.get("security", []),
+        business_rules=data.get("business_rules", []),
     )
 
 
@@ -103,6 +105,7 @@ def step_from_dict(data: dict[str, Any]) -> TestStep:
         headers=data.get("headers", {}),
         path_params=data.get("path_params", {}),
         query=data.get("query", {}),
+        parameter_serialization=data.get("parameter_serialization", {}),
         body=data.get("body"),
         assertions=[assertion_from_dict(item) for item in data.get("assertions", [])],
         extract=data.get("extract", {}),
@@ -121,6 +124,7 @@ def case_from_dict(data: dict[str, Any]) -> TestCase:
         headers=data.get("headers", {}),
         path_params=data.get("path_params", {}),
         query=data.get("query", {}),
+        parameter_serialization=data.get("parameter_serialization", {}),
         body=data.get("body"),
         assertions=[assertion_from_dict(item) for item in data.get("assertions", [])],
         source=data.get("source", ""),
@@ -134,6 +138,9 @@ def case_from_dict(data: dict[str, Any]) -> TestCase:
         steps=[step_from_dict(item) for item in data.get("steps", [])],
         cleanup_steps=[step_from_dict(item) for item in data.get("cleanup_steps", [])],
         scenario_id=data.get("scenario_id", ""),
+        rule_ids=string_list(data.get("rule_ids")),
+        coverage_partition_ids=string_list(data.get("coverage_partition_ids")),
+        fixture_requirements=string_list(data.get("fixture_requirements")),
     )
     return normalize_test_case(case, preserve_valid_id=True)
 

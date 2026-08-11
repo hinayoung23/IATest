@@ -3,11 +3,75 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import httpx
 
 DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 180
+
+
+@dataclass(slots=True)
+class TokenUsage:
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+    @classmethod
+    def from_openai(cls, value: dict[str, Any] | None) -> "TokenUsage":
+        value = value or {}
+        input_tokens = int(value.get("prompt_tokens") or value.get("input_tokens") or 0)
+        output_tokens = int(value.get("completion_tokens") or value.get("output_tokens") or 0)
+        return cls(input_tokens, output_tokens, int(value.get("total_tokens") or input_tokens + output_tokens))
+
+    @classmethod
+    def from_anthropic(cls, value: dict[str, Any] | None) -> "TokenUsage":
+        value = value or {}
+        input_tokens = int(value.get("input_tokens") or 0)
+        output_tokens = int(value.get("output_tokens") or 0)
+        return cls(input_tokens, output_tokens, input_tokens + output_tokens)
+
+    def add(self, other: "TokenUsage") -> None:
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+        self.total_tokens += other.total_tokens
+
+
+@dataclass(slots=True)
+class ModelToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+    raw_arguments: str = ""
+    parse_error: str = ""
+    original_raw_arguments: str = ""
+    repair_warning: str = ""
+
+    def to_openai_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "arguments": self.raw_arguments or json.dumps(self.arguments, ensure_ascii=False),
+            },
+        }
+
+
+@dataclass(slots=True)
+class ModelResponse:
+    text: str = ""
+    tool_calls: list[ModelToolCall] = field(default_factory=list)
+    usage: TokenUsage = field(default_factory=TokenUsage)
+    finish_reason: str = ""
+    provider_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def assistant_message(self) -> dict[str, Any]:
+        message: dict[str, Any] = {"role": "assistant", "content": self.text or ""}
+        if self.tool_calls:
+            message["tool_calls"] = [item.to_openai_dict() for item in self.tool_calls]
+        return message
 
 
 def chat_completion(
@@ -42,6 +106,389 @@ def chat_completion(
     return result
 
 
+def model_completion(
+    *,
+    base_url: str,
+    model: str,
+    api_key_env: str,
+    messages: list[dict[str, Any]],
+    provider: str = "openai-compatible",
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: str | dict[str, Any] | None = None,
+    thinking: dict[str, Any] | None = None,
+    temperature: float | None = None,
+    timeout: int | None = 60,
+    stream_callback: Callable[[str], None] | None = None,
+    max_tokens: int | None = None,
+) -> ModelResponse:
+    """Provider-neutral response with text, tool calls, finish reason and token usage."""
+    api_key = resolve_api_key(api_key_env)
+    if provider == "anthropic":
+        return anthropic_model_completion(
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            messages=messages,
+            tools=tools or [],
+            tool_choice=tool_choice,
+            temperature=temperature,
+            timeout=timeout,
+            stream_callback=stream_callback,
+            max_tokens=max_tokens,
+        )
+    if provider == "openai-compatible":
+        return openai_compatible_model_completion(
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            messages=messages,
+            tools=tools or [],
+            tool_choice=tool_choice,
+            thinking=thinking,
+            temperature=temperature,
+            timeout=timeout,
+            stream_callback=stream_callback,
+            max_tokens=max_tokens,
+        )
+    raise ValueError(f"不支持的大模型 Provider: {provider}")
+
+
+def openai_compatible_model_completion(
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_choice: str | dict[str, Any] | None,
+    thinking: dict[str, Any] | None,
+    temperature: float | None,
+    timeout: int | None,
+    stream_callback: Callable[[str], None] | None,
+    max_tokens: int | None,
+) -> ModelResponse:
+    endpoint = base_url.rstrip("/") + "/chat/completions"
+    request_body: dict[str, Any] = {"model": model, "messages": messages}
+    if tools:
+        request_body["tools"] = tools
+        request_body["tool_choice"] = tool_choice or "auto"
+    if thinking:
+        request_body["thinking"] = thinking
+    if stream_callback:
+        request_body["stream"] = True
+    if temperature is not None:
+        request_body["temperature"] = temperature
+    if max_tokens is not None:
+        request_body["max_tokens"] = max_tokens
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        if stream_callback:
+            with httpx.Client(timeout=timeout) as client:
+                with client.stream("POST", endpoint, json=request_body, headers=headers) as response:
+                    response.raise_for_status()
+                    return read_openai_model_stream(response.iter_lines(), stream_callback)
+        else:
+            data = post_json(endpoint, request_body, headers=headers, timeout=timeout)
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(http_status_error_message(exc)) from exc
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(timeout_message(timeout)) from exc
+    raise_if_api_error(data)
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("LLM 响应中没有 choices 字段")
+    choice = choices[0]
+    message = choice.get("message") or {}
+    return ModelResponse(
+        text=model_message_text(message.get("content")),
+        tool_calls=parse_openai_tool_calls(message.get("tool_calls") or []),
+        usage=TokenUsage.from_openai(data.get("usage")),
+        finish_reason=str(choice.get("finish_reason") or ""),
+        provider_metadata={"id": data.get("id"), "created": data.get("created")},
+    )
+
+
+def anthropic_model_completion(
+    *,
+    base_url: str,
+    model: str,
+    api_key: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_choice: str | dict[str, Any] | None,
+    temperature: float | None,
+    timeout: int | None,
+    stream_callback: Callable[[str], None] | None,
+    max_tokens: int | None,
+) -> ModelResponse:
+    system, anthropic_messages = to_anthropic_messages(messages)
+    request_body: dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens or 4096,
+        "messages": anthropic_messages,
+    }
+    if system:
+        request_body["system"] = system
+    if tools:
+        request_body["tools"] = [openai_tool_to_anthropic(item) for item in tools]
+        if tool_choice and tool_choice != "auto":
+            request_body["tool_choice"] = anthropic_tool_choice(tool_choice)
+    if temperature is not None:
+        request_body["temperature"] = temperature
+    if stream_callback:
+        request_body["stream"] = True
+    errors: list[str] = []
+    for endpoint in anthropic_endpoint_candidates(base_url):
+        headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01", "Content-Type": "application/json"}
+        try:
+            if stream_callback:
+                return post_anthropic_model_stream(endpoint, request_body, headers, stream_callback, timeout=timeout)
+            data = post_json(endpoint, request_body, headers=headers, timeout=timeout)
+            raise_if_api_error(data)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+            if is_not_found_error(exc):
+                continue
+            raise
+        blocks = data.get("content") or []
+        return ModelResponse(
+            text="\n".join(str(item.get("text") or "") for item in blocks if item.get("type") == "text").strip(),
+            tool_calls=parse_anthropic_tool_calls(blocks),
+            usage=TokenUsage.from_anthropic(data.get("usage")),
+            finish_reason=str(data.get("stop_reason") or ""),
+            provider_metadata={"id": data.get("id"), "stop_sequence": data.get("stop_sequence")},
+        )
+    raise RuntimeError(errors[-1] if errors else "LLM 请求失败")
+
+
+def read_openai_model_stream(response, stream_callback: Callable[[str], None]) -> ModelResponse:
+    text_parts: list[str] = []
+    calls: dict[int, dict[str, str]] = {}
+    usage = TokenUsage()
+    finish_reason = ""
+    stream_callback("已连接到大模型服务，正在等待模型返回内容...\n")
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
+        if not line or line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            line = line[5:].strip()
+        if line == "[DONE]":
+            break
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        raise_if_api_error(data)
+        if data.get("usage"):
+            usage = TokenUsage.from_openai(data["usage"])
+        for choice in data.get("choices") or []:
+            finish_reason = str(choice.get("finish_reason") or finish_reason)
+            delta = choice.get("delta") or {}
+            visible = stream_text_delta(delta)
+            if visible:
+                stream_callback(visible)
+            content = delta.get("content")
+            if isinstance(content, str) and content:
+                text_parts.append(content)
+            for raw_call in delta.get("tool_calls") or []:
+                index = int(raw_call.get("index") or 0)
+                target = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                target["id"] += str(raw_call.get("id") or "")
+                function = raw_call.get("function") or {}
+                target["name"] += str(function.get("name") or "")
+                target["arguments"] += str(function.get("arguments") or "")
+    parsed_calls = [tool_call_from_parts(item["id"], item["name"], item["arguments"], index) for index, item in sorted(calls.items())]
+    return ModelResponse("".join(text_parts), parsed_calls, usage, finish_reason)
+
+
+def post_anthropic_model_stream(
+    endpoint: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    stream_callback: Callable[[str], None],
+    timeout: int | None,
+) -> ModelResponse:
+    text_parts: list[str] = []
+    calls: dict[int, dict[str, str]] = {}
+    usage = TokenUsage()
+    finish_reason = ""
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            with client.stream("POST", endpoint, json=payload, headers=headers) as response:
+                response.raise_for_status()
+                stream_callback("已连接到大模型服务，正在等待模型返回内容...\n")
+                for raw_line in response.iter_lines():
+                    line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    try:
+                        data = json.loads(line[5:].strip())
+                    except json.JSONDecodeError:
+                        continue
+                    event_type = data.get("type")
+                    if event_type == "error":
+                        raise RuntimeError(f"LLM 请求失败: {data.get('error') or data}")
+                    if event_type == "message_start":
+                        usage = TokenUsage.from_anthropic((data.get("message") or {}).get("usage"))
+                    elif event_type == "content_block_start":
+                        index = int(data.get("index") or 0)
+                        block = data.get("content_block") or {}
+                        if block.get("type") == "tool_use":
+                            calls[index] = {
+                                "id": str(block.get("id") or ""),
+                                "name": str(block.get("name") or ""),
+                                "arguments": json.dumps(block.get("input") or {}, ensure_ascii=False) if block.get("input") else "",
+                            }
+                        elif block.get("type") == "text" and block.get("text"):
+                            text_parts.append(str(block["text"]))
+                    elif event_type == "content_block_delta":
+                        index = int(data.get("index") or 0)
+                        delta = data.get("delta") or {}
+                        visible = anthropic_stream_text_delta(delta)
+                        if visible:
+                            stream_callback(visible)
+                        if delta.get("type") == "text_delta" and delta.get("text"):
+                            text_parts.append(str(delta["text"]))
+                        elif delta.get("type") == "input_json_delta":
+                            calls.setdefault(index, {"id": "", "name": "", "arguments": ""})["arguments"] += str(delta.get("partial_json") or "")
+                    elif event_type == "message_delta":
+                        delta = data.get("delta") or {}
+                        finish_reason = str(delta.get("stop_reason") or finish_reason)
+                        output_tokens = int((data.get("usage") or {}).get("output_tokens") or 0)
+                        if output_tokens:
+                            usage.output_tokens = output_tokens
+                            usage.total_tokens = usage.input_tokens + output_tokens
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(http_status_error_message(exc)) from exc
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(timeout_message(timeout)) from exc
+    parsed_calls = [tool_call_from_parts(item["id"], item["name"], item["arguments"], index) for index, item in sorted(calls.items())]
+    return ModelResponse("".join(text_parts), parsed_calls, usage, finish_reason)
+
+
+def parse_openai_tool_calls(values: list[dict[str, Any]]) -> list[ModelToolCall]:
+    result = []
+    for index, value in enumerate(values):
+        function = value.get("function") or {}
+        result.append(tool_call_from_parts(str(value.get("id") or ""), str(function.get("name") or ""), function.get("arguments"), index))
+    return result
+
+
+def parse_anthropic_tool_calls(blocks: list[dict[str, Any]]) -> list[ModelToolCall]:
+    result = []
+    for index, block in enumerate(blocks):
+        if block.get("type") != "tool_use":
+            continue
+        raw_input = block.get("input") or {}
+        if isinstance(raw_input, dict):
+            result.append(
+                ModelToolCall(
+                    id=str(block.get("id") or f"tool-{index}"),
+                    name=str(block.get("name") or ""),
+                    arguments=raw_input,
+                    raw_arguments=json.dumps(raw_input, ensure_ascii=False),
+                )
+            )
+        else:
+            result.append(tool_call_from_parts(str(block.get("id") or ""), str(block.get("name") or ""), raw_input, index))
+    return result
+
+
+def tool_call_from_parts(call_id: str, name: str, raw_arguments: Any, index: int) -> ModelToolCall:
+    if isinstance(raw_arguments, dict):
+        return ModelToolCall(call_id or f"tool-{index}", name, raw_arguments, json.dumps(raw_arguments, ensure_ascii=False))
+    raw = str(raw_arguments or "{}")
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("工具参数必须是 JSON 对象")
+        return ModelToolCall(call_id or f"tool-{index}", name, parsed, raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        try:
+            from json_repair import loads as repair_json_loads
+
+            repaired = repair_json_loads(raw, skip_json_loads=True)
+            if not isinstance(repaired, dict):
+                raise ValueError("修复后的工具参数不是 JSON 对象")
+            repaired_raw = json.dumps(repaired, ensure_ascii=False, separators=(",", ":"))
+            return ModelToolCall(
+                call_id or f"tool-{index}",
+                name,
+                repaired,
+                repaired_raw,
+                "",
+                raw,
+                f"模型工具参数 JSON 已确定性修复：{exc}",
+            )
+        except Exception:
+            return ModelToolCall(call_id or f"tool-{index}", name, {}, raw, str(exc))
+
+
+def model_message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(item.get("text") or "") for item in content if isinstance(item, dict) and item.get("type") == "text").strip()
+    return ""
+
+
+def to_anthropic_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    system_parts: list[str] = []
+    converted: list[dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        if role == "system":
+            system_parts.append(model_message_text(message.get("content")))
+            continue
+        if role == "assistant":
+            blocks: list[dict[str, Any]] = []
+            text = model_message_text(message.get("content"))
+            if text:
+                blocks.append({"type": "text", "text": text})
+            for raw_call in message.get("tool_calls") or []:
+                function = raw_call.get("function") or {}
+                call = tool_call_from_parts(str(raw_call.get("id") or ""), str(function.get("name") or ""), function.get("arguments"), len(blocks))
+                blocks.append({"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments})
+            converted.append({"role": "assistant", "content": blocks or [{"type": "text", "text": ""}]})
+            continue
+        if role == "tool":
+            block = {
+                "type": "tool_result",
+                "tool_use_id": str(message.get("tool_call_id") or ""),
+                "content": str(message.get("content") or ""),
+                "is_error": bool(message.get("is_error", False)),
+            }
+            if converted and converted[-1]["role"] == "user" and isinstance(converted[-1]["content"], list) and all(
+                item.get("type") == "tool_result" for item in converted[-1]["content"]
+            ):
+                converted[-1]["content"].append(block)
+            else:
+                converted.append({"role": "user", "content": [block]})
+            continue
+        converted.append({"role": "user", "content": message.get("content") or ""})
+    return "\n\n".join(part for part in system_parts if part), converted
+
+
+def openai_tool_to_anthropic(tool: dict[str, Any]) -> dict[str, Any]:
+    function = tool.get("function") or tool
+    return {
+        "name": str(function.get("name") or ""),
+        "description": str(function.get("description") or ""),
+        "input_schema": function.get("parameters") or {"type": "object", "properties": {}},
+    }
+
+
+def anthropic_tool_choice(value: str | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(value, dict):
+        function = value.get("function") or value
+        name = function.get("name")
+        return {"type": "tool", "name": name} if name else {"type": "auto"}
+    if value in {"required", "any"}:
+        return {"type": "any"}
+    return {"type": "auto"}
+
+
 def openai_compatible_chat_completion(
     *,
     base_url: str,
@@ -69,22 +516,20 @@ def openai_compatible_chat_completion(
             "Content-Type": "application/json",
     }
     try:
-        with httpx.Client(timeout=timeout) as client:
-            if stream_callback:
+        if stream_callback:
+            with httpx.Client(timeout=timeout) as client:
                 with client.stream("POST", endpoint, json=request_body, headers=headers) as response:
                     response.raise_for_status()
                     return read_openai_stream(response.iter_lines(), stream_callback)
-            response = client.post(endpoint, json=request_body, headers=headers)
-            response.raise_for_status()
-            data = response.json()
+        data = post_json(endpoint, request_body, headers=headers, timeout=timeout)
     except httpx.HTTPStatusError as exc:
-        raise RuntimeError(f"LLM 请求失败: HTTP {exc.response.status_code} {exc.response.text}") from exc
+        raise RuntimeError(http_status_error_message(exc)) from exc
     except httpx.TimeoutException as exc:
         raise RuntimeError(timeout_message(timeout)) from exc
     raise_if_api_error(data)
     if not data.get("choices"):
         raise RuntimeError("LLM 响应中没有 choices 字段")
-    return data["choices"][0]["message"]["content"]
+    return model_message_text(data["choices"][0].get("message", {}).get("content"))
 
 
 def anthropic_chat_completion(
@@ -195,28 +640,54 @@ def post_anthropic_stream(
                     if content:
                         parts.append(content)
     except httpx.HTTPStatusError as exc:
-        raise RuntimeError(f"LLM 请求失败: HTTP {exc.response.status_code} {exc.response.text}") from exc
+        raise RuntimeError(http_status_error_message(exc)) from exc
     except httpx.TimeoutException as exc:
         raise RuntimeError(timeout_message(timeout)) from exc
     return "".join(parts)
 
 
 def post_json(endpoint: str, payload: dict[str, Any], headers: dict[str, str], timeout: int | None = 60) -> dict[str, Any]:
-    try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.post(endpoint, json=payload, headers=headers)
-            response.raise_for_status()
-            return response.json()
-    except httpx.HTTPStatusError as exc:
-        raise RuntimeError(f"LLM 请求失败: HTTP {exc.response.status_code} {exc.response.text}") from exc
-    except httpx.TimeoutException as exc:
-        raise RuntimeError(timeout_message(timeout)) from exc
+    last_error: Exception | None = None
+    with httpx.Client(timeout=timeout) as client:
+        for attempt in range(3):
+            try:
+                response = client.post(endpoint, json=payload, headers=headers)
+                response.raise_for_status()
+                try:
+                    data = response.json()
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError("LLM 响应不是有效 JSON") from exc
+                if not isinstance(data, dict):
+                    raise RuntimeError("LLM 响应 JSON 根节点不是对象")
+                return data
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code != 429 and exc.response.status_code < 500:
+                    raise RuntimeError(http_status_error_message(exc)) from exc
+            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                last_error = exc
+            except httpx.TimeoutException as exc:
+                raise RuntimeError(timeout_message(timeout)) from exc
+            if attempt < 2:
+                time.sleep(0.5 * (2**attempt))
+    if isinstance(last_error, httpx.HTTPStatusError):
+        raise RuntimeError(http_status_error_message(last_error)) from last_error
+    raise RuntimeError(f"LLM 请求失败: {last_error}") from last_error
 
 
 def timeout_message(timeout: int | None) -> str:
     if timeout is None:
         return "LLM 请求超时"
     return f"LLM 请求空闲超时：超过 {timeout} 秒未收到服务端数据；这不是总生成时长限制"
+
+
+def http_status_error_message(exc: httpx.HTTPStatusError) -> str:
+    try:
+        detail = exc.response.text.strip()[:2000]
+    except (httpx.ResponseNotRead, httpx.StreamClosed):
+        detail = ""
+    suffix = f" {detail}" if detail else ""
+    return f"LLM 请求失败: HTTP {exc.response.status_code}{suffix}"
 
 
 def stream_text_delta(delta: dict[str, Any]) -> str:
@@ -246,7 +717,7 @@ def anthropic_endpoint_candidates(base_url: str) -> list[str]:
 
 def is_not_found_error(exc: RuntimeError) -> bool:
     message = str(exc)
-    return "404" in message and "NOT_FOUND" in message
+    return "HTTP 404" in message
 
 
 def raise_if_api_error(data: dict[str, Any]) -> None:
@@ -310,8 +781,6 @@ def _looks_truncated(content: str) -> bool:
     if not stripped:
         return True
     # Clean endings: ], }
-    if stripped[-1] in ("]", "}"):
-        return False
     if stripped[-1] in ("]", "}"):
         return False
     # Suspicious endings: comma, unclosed bracket, mid-word
@@ -472,16 +941,16 @@ repair_json_array = repair_json_output
 
 
 # ═══════════════════════════════════════════════════════════════
-# LLM Debug Log — controlled by AITEST_DEBUG_LLM=1 env var
+# LLM Debug Log — controlled by IATEST_DEBUG_LLM=1 env var
 # ═══════════════════════════════════════════════════════════════
 
-_DEBUG_LOG_PATH = "/tmp/aitest_llm_debug.log"
+_DEBUG_LOG_PATH = "/tmp/iatest_llm_debug.log"
 _DEBUG_CALL_SEQ = 0
 
 
 def _debug_llm_log(messages: list[dict[str, str]], model: str, provider: str) -> None:
     global _DEBUG_CALL_SEQ
-    if not os.getenv("AITEST_DEBUG_LLM"):
+    if not os.getenv("IATEST_DEBUG_LLM"):
         return
     _DEBUG_CALL_SEQ += 1
     import datetime
@@ -502,7 +971,7 @@ def _debug_llm_log(messages: list[dict[str, str]], model: str, provider: str) ->
 
 
 def _debug_llm_log_response(result: str) -> None:
-    if not os.getenv("AITEST_DEBUG_LLM"):
+    if not os.getenv("IATEST_DEBUG_LLM"):
         return
     with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
         f.write(f"\n--- [response] ({len(result)} chars) ---\n")

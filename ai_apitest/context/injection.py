@@ -34,13 +34,9 @@ def calculate_injection_budget(
     user_prompt_base: str,
 ) -> int:
     default_budget = {"max_context_ratio": 0.20, "max_context_tokens": 12000, "reserve_output_tokens": 8000}
-    budget_config = (
-        context_config.get("injection", {})
-        .get("budgets", {})
-        .get(task_type, default_budget)
-    )
+    budget_config = context_budget_config(context_config, task_type, default_budget)
     context_window = int(model_config.get("context_window") or 128000)
-    reserve_output = int(model_config.get("default_output_tokens") or budget_config.get("reserve_output_tokens") or 8000)
+    reserve_output = int(budget_config.get("reserve_output_tokens") or model_config.get("default_output_tokens") or 8000)
     safety_margin = 1000
     base_tokens = estimate_tokens(system_prompt) + estimate_tokens(user_prompt_base)
     available = max(0, context_window - base_tokens - reserve_output - safety_margin)
@@ -61,7 +57,10 @@ def build_context_bundle(
     environment: str = "",
 ) -> ContextBundle:
     budget = calculate_injection_budget(model_config, context_config, task_type, system_prompt, user_prompt_base)
-    candidates = aggregate_prompt_candidates(retrieve_candidates(root, project, endpoints or [], environment=environment))
+    max_candidates = max(100, min(10000, int(context_config.get("injection", {}).get("max_candidates", 2000))))
+    candidates = aggregate_prompt_candidates(
+        retrieve_candidates(root, project, endpoints or [], environment=environment, limit=max_candidates)
+    )
     included: list[dict[str, Any]] = []
     excluded: list[dict[str, str]] = []
     used = 0
@@ -97,13 +96,34 @@ def build_context_bundle(
             "model_context_window": int(model_config.get("context_window") or 128000),
             "context_budget": budget,
             "used_tokens": used,
-            "reserve_output_tokens": int(model_config.get("default_output_tokens") or 8000),
+            "reserve_output_tokens": int(
+                context_budget_config(
+                    context_config,
+                    task_type,
+                    {"reserve_output_tokens": 8000},
+                ).get("reserve_output_tokens")
+                or model_config.get("default_output_tokens")
+                or 8000
+            ),
             "included_lesson_ids": included_ids,
             "excluded_lesson_ids": excluded,
             "final_prompt_hash": "sha256:" + hashlib.sha256(block.encode("utf-8")).hexdigest(),
         },
     )
     return ContextBundle(block, pack_id, included_ids, excluded, used, budget)
+
+
+def context_budget_config(
+    context_config: dict[str, Any],
+    task_type: str,
+    default: dict[str, Any],
+) -> dict[str, Any]:
+    value = (
+        context_config.get("injection", {})
+        .get("budgets", {})
+        .get(task_type)
+    )
+    return value if isinstance(value, dict) else default
 
 
 def aggregate_prompt_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -208,22 +228,73 @@ def flatten_lesson_ids(lessons: list[dict[str, Any]]) -> list[str]:
     return result
 
 
-def retrieve_candidates(root: Path, project: str, endpoints: list[Endpoint], environment: str = "") -> list[dict[str, Any]]:
+def retrieve_candidates(
+    root: Path,
+    project: str,
+    endpoints: list[Endpoint],
+    environment: str = "",
+    *,
+    limit: int = 2000,
+) -> list[dict[str, Any]]:
     safe_project = safe_project_name(project)
     endpoint_keys = {(endpoint.method, endpoint.path) for endpoint in endpoints}
     path_prefixes = {endpoint.path.split("/", 3)[1] for endpoint in endpoints if endpoint.path.startswith("/") and len(endpoint.path.split("/")) > 1}
     with context_connection(root, safe_project) as conn:
-        rows = conn.execute(
+        conn.execute("create temp table if not exists requested_endpoints(method text, path text, primary key(method, path))")
+        conn.execute("delete from requested_endpoints")
+        conn.executemany(
+            "insert or ignore into requested_endpoints(method, path) values (?, ?)",
+            sorted(endpoint_keys),
+        )
+        conn.execute("create temp table if not exists requested_modules(module text primary key)")
+        conn.execute("delete from requested_modules")
+        conn.executemany(
+            "insert or ignore into requested_modules(module) values (?)",
+            [(prefix,) for prefix in sorted(path_prefixes)],
+        )
+        relevance = ""
+        if endpoints:
+            relevance = """
+              and (
+                    l.scope in ('project', 'report')
+                    or exists(
+                        select 1 from requested_endpoints e
+                        where e.method = l.method and e.path = l.path
+                    )
+                    or exists(
+                        select 1 from requested_modules m
+                        where l.path = '/' || m.module or l.path like '/' || m.module || '/%'
+                    )
+              )
             """
+        rows = conn.execute(
+            f"""
             select l.*,
                    exists(select 1 from lesson_relations r where r.relation_type = 'conflict' and (r.lesson_id = l.id or r.related_lesson_id = l.id)) as has_conflict
             from lessons l
             where l.project = ?
               and l.lifecycle_status in ('active', 'reopened')
-            order by l.updated_at desc
-            limit 500
+              and l.review_status = 'confirmed'
+              and l.confidence != 'low'
+              and (l.lesson_type != 'data_dependency' or l.verification_status = 'verified')
+              {relevance}
+            order by
+              case
+                when exists(
+                    select 1 from requested_endpoints e
+                    where e.method = l.method and e.path = l.path
+                ) then 0
+                when exists(
+                    select 1 from requested_modules m
+                    where l.path = '/' || m.module or l.path like '/' || m.module || '/%'
+                ) then 1
+                when l.scope in ('project', 'report') then 2
+                else 3
+              end,
+              l.updated_at desc
+            limit ?
             """,
-            (safe_project,),
+            (safe_project, max(1, int(limit))),
         ).fetchall()
     lessons = [row_to_candidate(row, endpoint_keys, path_prefixes, environment) for row in rows]
     return sorted(lessons, key=rank_key)
@@ -264,8 +335,10 @@ def exclusion_reason(lesson: dict[str, Any]) -> str:
         return "lifecycle_status_pending"
     if lesson.get("confidence") == "low":
         return "confidence_low"
-    if lesson.get("review_status") in {"rejected", "needs_review"}:
+    if lesson.get("review_status") != "confirmed":
         return f"review_status_{lesson.get('review_status')}"
+    if lesson.get("lesson_type") == "data_dependency" and lesson.get("verification_status") != "verified":
+        return f"dependency_{lesson.get('verification_status') or 'unverified'}"
     if lesson.get("lifecycle_status") in {"archived", "merged", "ignored"}:
         return f"lifecycle_status_{lesson.get('lifecycle_status')}"
     if lesson.get("has_conflict"):

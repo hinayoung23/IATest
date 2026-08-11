@@ -9,18 +9,36 @@ from ai_apitest.core.models import Endpoint
 from ai_apitest.core.serde import endpoint_from_dict
 
 
-def discover_endpoints_with_llm(text: str, llm: dict, stream_callback: Callable[[str], None] | None = None) -> list[Endpoint]:
+def discover_endpoints_with_llm(
+    text: str,
+    llm: dict,
+    stream_callback: Callable[[str], None] | None = None,
+    *,
+    quality_feedback: dict[str, Any] | None = None,
+) -> list[Endpoint]:
+    messages = [
+        {
+            "role": "user",
+            "content": render_prompt("api_discovery.md", {"DOCUMENT_TEXT": text}),
+        }
+    ]
+    if quality_feedback:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "上一轮质量审计未通过。只根据上方原始文档修复以下问题；"
+                    "不得为了提高分数补充文档没有声明的字段：\n"
+                    + json.dumps(quality_feedback, ensure_ascii=False, separators=(",", ":"), default=str)
+                ),
+            }
+        )
     content = chat_completion(
         base_url=llm.get("base_url", ""),
         model=llm.get("model", ""),
         api_key_env=llm.get("api_key_env", ""),
         provider=llm.get("provider", "openai-compatible"),
-        messages=[
-            {
-                "role": "user",
-                "content": render_prompt("api_discovery.md", {"DOCUMENT_TEXT": text}),
-            }
-        ],
+        messages=messages,
         timeout=DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
         stream_callback=stream_callback,
     )
@@ -93,11 +111,17 @@ def endpoints_from_payload(items: list[dict[str, Any]]) -> list[Endpoint]:
             "method": method,
             "path": path,
             "summary": item.get("summary") or item.get("name") or f"{method} {path}",
-            "description": item.get("description", ""),
-            "parameters": item.get("parameters", []),
+            "description": item.get("description") or "",
+            "parameters": item.get("parameters") if isinstance(item.get("parameters"), list) else [],
             "request_body": item.get("request_body") or item.get("body"),
-            "responses": item.get("responses", {"200": {"description": "OK"}}),
-            "tags": item.get("tags", []),
+            # Missing response documentation stays unknown; inventing a 200 here
+            # later turns into an unsupported assertion in generated cases.
+            "responses": item.get("responses") if isinstance(item.get("responses"), dict) else {},
+            "tags": item.get("tags") if isinstance(item.get("tags"), list) else [],
+            "operation_id": item.get("operation_id") or item.get("operationId", ""),
+            "deprecated": bool(item.get("deprecated", False)),
+            "security": item.get("security") if isinstance(item.get("security"), list) else [],
+            "business_rules": item.get("business_rules") if isinstance(item.get("business_rules"), list) else [],
         }
         endpoints.append(endpoint_from_dict(payload))
     return endpoints

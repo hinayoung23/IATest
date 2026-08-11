@@ -11,6 +11,15 @@
   </div>
 </section>
 <section>
+  <h2>Agent Runtime</h2>
+  <p>控制大模型如何以受限身份、工具和本地门禁完成接口识别、用例生成及报告分析。页面只保留运行链路选择，高级参数统一在项目 JSON 中维护。</p>
+  {{AGENT_RUNTIME_CONFIG}}
+</section>
+<section>
+  <h2>交付物质量审计</h2>
+  {{QUALITY_AUDIT_CONFIG}}
+</section>
+<section>
   <h2>用例生成策略配置</h2>
   {{GENERATION_STRATEGIES}}
   {{CUSTOM_GENERATION_STRATEGIES}}
@@ -19,6 +28,14 @@
   <h2>用例执行策略配置</h2>
   <div class="table-wrap"><table><thead><tr><th>策略</th><th>说明</th><th>状态</th></tr></thead><tbody><tr><td>执行冒烟用例</td><td>执行 happy_path 和 dependency_chain 中可运行用例</td><td>启用</td></tr><tr><td>执行全量用例</td><td>执行所有 runnable=true 的用例</td><td>启用</td></tr></tbody></table></div>
   {{CUSTOM_EXECUTION_STRATEGIES}}
+</section>
+<section>
+  <h2>项目方外部测试能力</h2>
+  {{FIXTURE_CONFIG}}
+</section>
+<section>
+  <h2>接口 Mock</h2>
+  {{MOCK_CONFIG}}
 </section>
 <section>
   <h2>主控治理配置</h2>
