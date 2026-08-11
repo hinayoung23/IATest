@@ -28,7 +28,7 @@ AI 驱动的接口自动化测试框架，用于识别接口、生成用例、�
 Install the latest release from PyPI:
 
 ```bash
-python -m pip install iatest
+python -m pip install iatest-framework
 ```
 
 For source development, clone the repository and run `python -m pip install -e .` from its root directory.
@@ -311,7 +311,7 @@ Do not commit `.env` or plaintext API keys.
 从 PyPI 安装最新版本：
 
 ```bash
-python -m pip install iatest
+python -m pip install iatest-framework
 ```
 
 如需参与源码开发，请克隆仓库，并在仓库根目录执行 `python -m pip install -e .`。
