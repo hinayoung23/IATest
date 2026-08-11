@@ -3506,6 +3506,7 @@ def render_quality_audit_detail(
             )
         selected_badge = " · 已选交付产物" if candidate_id == selected_id else ""
         dimension_avg = candidate.get("dimension_averages") or {}
+        score_rows_html = "".join(score_rows) or '<tr><td colspan="8">本轮未调用模型审计</td></tr>'
         candidate_blocks.append(
             "<section>"
             f"<h2>第 {esc(candidate.get('round_index', ''))} 轮{esc(selected_badge)}</h2>"
@@ -3522,7 +3523,7 @@ def render_quality_audit_detail(
             f"{'<h3>本地硬门禁问题</h3>' + gate_issues if candidate.get('hard_gate_issues') else ''}"
             "<div class='table-wrap'><table><thead><tr><th>审计模型</th><th>状态</th>"
             "<th>可靠性</th><th>完整性</th><th>合理性</th><th>非冗余</th><th>总分</th><th>置信度</th>"
-            f"</tr></thead><tbody>{''.join(score_rows) or '<tr><td colspan=\"8\">本轮未调用模型审计</td></tr>'}</tbody></table></div>"
+            f"</tr></thead><tbody>{score_rows_html}</tbody></table></div>"
             f"<h3>各模型评分原因</h3>{''.join(issue_blocks) or '<p>无模型评分记录。</p>'}"
             "</section>"
         )
@@ -4383,7 +4384,7 @@ def page(root: Path, project: str, title: str, body: str) -> str:
       </div>
       <nav class="nav">{nav_links(project, title)}</nav>
       <div class="sidebar-footer">
-        <small>v1.0.1 · 项目：{esc(project)}</small>
+        <small>v1.0.2 · 项目：{esc(project)}</small>
       </div>
     </aside>
     """
