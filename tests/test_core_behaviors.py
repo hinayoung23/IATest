@@ -2504,7 +2504,7 @@ def test_web_console_can_start_and_stop_mock_listener(tmp_path) -> None:
             handler,
         )
         status = web_mock_status(tmp_path)
-        assert status["running"] is True
+        assert status["running"] is True, handler.locations
         assert status["port"] > 0
         assert status["route_count"] == 1
         assert "message=" in handler.locations[-1]

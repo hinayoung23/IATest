@@ -186,14 +186,22 @@ def start_web_mock_service(root: Path) -> dict[str, Any]:
             if existing is not None:
                 existing[0].server_close()
             server = build_mock_server(load_config(root))
+            ready = threading.Event()
+
+            def serve_mock() -> None:
+                ready.set()
+                server.serve_forever(poll_interval=0.1)
+
             thread = threading.Thread(
-                target=server.serve_forever,
+                target=serve_mock,
                 name="iatest-web-mock",
                 daemon=True,
             )
             _WEB_MOCK_SERVERS[key] = (server, thread)
             try:
                 thread.start()
+                if not ready.wait(timeout=2) or not thread.is_alive():
+                    raise RuntimeError("接口 Mock 监听线程未能进入运行状态")
             except Exception:
                 _WEB_MOCK_SERVERS.pop(key, None)
                 server.server_close()
@@ -4375,7 +4383,7 @@ def page(root: Path, project: str, title: str, body: str) -> str:
       </div>
       <nav class="nav">{nav_links(project, title)}</nav>
       <div class="sidebar-footer">
-        <small>v1.0.0 · 项目：{esc(project)}</small>
+        <small>v1.0.1 · 项目：{esc(project)}</small>
       </div>
     </aside>
     """

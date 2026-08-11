@@ -25,11 +25,13 @@ AI 驱动的接口自动化测试框架，用于识别接口、生成用例、�
 
 ### Install
 
-From the repository directory:
+Install the latest release from PyPI:
 
 ```bash
-python -m pip install -e .
+python -m pip install iatest
 ```
+
+For source development, clone the repository and run `python -m pip install -e .` from its root directory.
 
 Confirm that the command is available:
 
@@ -306,11 +308,13 @@ Do not commit `.env` or plaintext API keys.
 
 ### 安装
 
-在项目仓库目录执行：
+从 PyPI 安装最新版本：
 
 ```bash
-python -m pip install -e .
+python -m pip install iatest
 ```
+
+如需参与源码开发，请克隆仓库，并在仓库根目录执行 `python -m pip install -e .`。
 
 确认命令已经可用：
 
