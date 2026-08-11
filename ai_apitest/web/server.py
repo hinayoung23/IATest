@@ -4384,7 +4384,7 @@ def page(root: Path, project: str, title: str, body: str) -> str:
       </div>
       <nav class="nav">{nav_links(project, title)}</nav>
       <div class="sidebar-footer">
-        <small>v1.0.2 · 项目：{esc(project)}</small>
+        <small>v1.0.3 · 项目：{esc(project)}</small>
       </div>
     </aside>
     """

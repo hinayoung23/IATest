@@ -574,4 +574,4 @@ projects/<project>/.iatest/        本地运行数据库和缓存
 
 ## License
 
-MIT
+Apache-2.0

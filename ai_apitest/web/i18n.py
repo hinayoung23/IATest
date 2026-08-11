@@ -507,7 +507,7 @@ _EN: dict[str, str] = {
     "高级参数改用 JSON 配置": "Advanced settings are configured in JSON",
     "后台任务正在执行，请稍作等待。": "A background task is running. Please wait.",
     "时由系统临时分配一个空闲端口。": "to let the system assign an available port.",
-    "v1.0.2 · 项目：demo": "v1.0.2 · Project: demo",
+    "v1.0.3 · 项目：demo": "v1.0.3 · Project: demo",
     "待确认 0 条 · 经验库与审计": "0 pending · knowledge and audit",
     "Provider 支持原生工具调用": "Provider supports native tool calls",
     "返回的状态码、响应头、响应体和延迟": "Returned status, headers, body, and delay",
@@ -1294,7 +1294,7 @@ _RU.update(
 
 _JA.update(
     {
-        "smoke, 用户模块": "smoke, user-module", "v1.0.2 · 项目：demo": "v1.0.2 · プロジェクト：demo",
+        "smoke, 用户模块": "smoke, user-module", "v1.0.3 · 项目：demo": "v1.0.3 · プロジェクト：demo",
         "上次通过率": "前回の合格率", "不需要": "不要", "与上次比较": "前回との比較", "主控模型连通性测试中": "プライマリモデルの接続をテスト中",
         "主流程": "正常系", "以断言列表为准。": "アサーション一覧を参照してください。", "例如 tempbox、order-service、crm-api": "例：tempbox、order-service、crm-api",
         "例如：补充 prefix 包含中文、特殊字符、重复前缀时的异常用例": "例：Unicode、特殊文字、重複prefixの異常ケースを追加",
@@ -1319,7 +1319,7 @@ _JA.update(
 
 _FR.update(
     {
-        "smoke, 用户模块": "smoke, module-utilisateur", "v1.0.2 · 项目：demo": "v1.0.2 · Projet : demo",
+        "smoke, 用户模块": "smoke, module-utilisateur", "v1.0.3 · 项目：demo": "v1.0.3 · Projet : demo",
         "上次通过率": "Taux de réussite précédent", "不需要": "Non requis", "与上次比较": "Comparaison précédente", "主控模型连通性测试中": "Test de connexion du modèle principal",
         "主流程": "Parcours nominal", "以断言列表为准。": "Voir la liste des assertions.", "例如 tempbox、order-service、crm-api": "Par exemple : tempbox, order-service, crm-api",
         "例如：补充 prefix 包含中文、特殊字符、重复前缀时的异常用例": "Exemple : ajouter des cas négatifs pour Unicode, caractères spéciaux et préfixes répétés",
@@ -1344,7 +1344,7 @@ _FR.update(
 
 _RU.update(
     {
-        "smoke, 用户模块": "smoke, модуль-пользователей", "v1.0.2 · 项目：demo": "v1.0.2 · Проект: demo",
+        "smoke, 用户模块": "smoke, модуль-пользователей", "v1.0.3 · 项目：demo": "v1.0.3 · Проект: demo",
         "上次通过率": "Предыдущая успешность", "不需要": "Не требуется", "与上次比较": "Сравнение с прошлым запуском", "主控模型连通性测试中": "Проверка подключения основной модели",
         "主流程": "Основной сценарий", "以断言列表为准。": "См. список проверок.", "例如 tempbox、order-service、crm-api": "Например: tempbox, order-service, crm-api",
         "例如：补充 prefix 包含中文、特殊字符、重复前缀时的异常用例": "Пример: добавить негативные сценарии для Unicode, специальных символов и повторных префиксов",
