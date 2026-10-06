@@ -277,7 +277,7 @@ def test_selected_environment_provenance_and_ci_exit_codes(tmp_path, monkeypatch
     output = CliRunner().invoke(app, ["run", "--project", "demo", "--no-ai", "--junit", "results.xml", "--json-output", "results.json"])
     assert output.exit_code == 1, output.output
     assert (tmp_path / "results.xml").exists()
-    assert "private-token" not in (tmp_path / "results.json").read_text()
+    assert "private-token" not in (tmp_path / "results.json").read_text(encoding="utf-8")
     empty = CliRunner().invoke(app, ["run", "--project", "empty", "--no-ai"])
     assert empty.exit_code == 5, empty.output
     allowed = CliRunner().invoke(app, ["run", "--project", "empty", "--no-ai", "--allow-empty"])
