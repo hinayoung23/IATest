@@ -9,7 +9,7 @@
 - 启用的每一项策略（见用例生成策略列表），只要该接口适用，必须覆盖该策略对应的场景类别。如果多个策略覆盖同一语义场景，可以合并为一条用例，在 tags 中列出所有覆盖的策略名。
 - status_code_coverage 与 happy_path 在只有 200 响应的接口上可以合并：一条 happy_path 用例同时标记 status_code_coverage。
 - equivalence_class 对参数只有单一取值时，可以和 happy_path 合并。
-- dependency_chain 策略：如果接口列表中存在明显的数据依赖链（例如 /api/generate → /api/check/{email} → /api/messages/{email} → /api/extend/{email} → /api/delete/{email}），必须输出 method=CHAIN 的链路用例。链路用例包含 steps 数组，按依赖顺序编排。
+- dependency_chain 策略：如果接口列表中存在明显的数据依赖链（生产资源 → 查询状态 → 更新 → 清理，仅使用当前契约和依赖图中的接口），必须输出 method=CHAIN 的链路用例。链路用例包含 steps 数组，按依赖顺序编排。
 - path_parameter_error 策略：每个包含路径参数（如 {email}、{id}）的接口，覆盖空值和非法格式两类异常。如果接口文档对空路径参数有明确路由行为（如回退到列表），根据文档调整预期，不要机械生成无效用例。
 - boundary_value 策略：对包含 query 参数（如 prefix、limit、offset）的接口，覆盖空值、最小值、最大值三个边界。如果某类边界在语义上和已有用例等价，可以合并。
 - equivalence_class 策略：对多值枚举参数覆盖有效类和至少一个无效类。参数选项很多时选择代表性取值（首尾各一），不需要为每个枚举值生成独立用例。
@@ -22,7 +22,7 @@
 - 链路用例的 priority 应为 P0 或 P1。
 
 ### 3. 通用要求
-- 如果某条用例依赖已存在的数据，不要硬编码不可控数据；应优先输出 setup_steps 创建前置数据，并用 extract 提取变量给主请求使用。例如：setup_steps 中 `{"method":"GET","path":"/api/generate","extract":{"email":"$.email"}}`，主请求 path_params 中使用 `{"email":"{% raw %}{{email}}{% endraw %}"}`。
+- 如果某条用例依赖已存在的数据，不要硬编码不可控数据；应优先输出 setup_steps 创建前置数据，并用 extract 提取变量给主请求使用。例如：setup_steps 中 `{"method":"POST","path":"/users","extract":{"id":"$.id"}}`，主请求 path_params 中使用 `{"id":"{% raw %}{{id}}{% endraw %}"}`。
 - 如果用例会创建临时测试数据，且接口定义中存在可删除该资源的接口，必须输出 cleanup_steps。
 - cleanup_steps 是测试数据清理动作，即使用例失败也应尽量执行清理。
 - 负向用例、破坏性用例或缺少可靠前置数据的用例可以 runnable=false，但仍应保留用例设计。

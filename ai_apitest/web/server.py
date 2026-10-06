@@ -59,7 +59,7 @@ from ai_apitest.core.paths import (
 )
 from ai_apitest.core.serde import case_from_dict, endpoint_from_dict, read_json, to_jsonable, write_json
 from ai_apitest.domain.case_drafts import validate_compiled_cases
-from ai_apitest.discovery.document import load_source_text, parse_api_document
+from ai_apitest.discovery.document import load_source_text, parse_api_document, load_and_parse_source
 from ai_apitest.execution.fixtures import (
     case_has_configured_fixtures,
     case_is_executable,
@@ -88,6 +88,8 @@ from ai_apitest.web.task_store import (
     claim_task,
     create_task,
     heartbeat_task,
+    request_cancel,
+    cancellation_requested,
     list_tasks,
     queued_tasks,
     recover_stale_tasks,
@@ -413,6 +415,9 @@ def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandle
                 self.respond_error(400, str(exc))
                 return
             try:
+                if parsed.path == "/actions/cancel-task":
+                    handle_action(root, project, parsed.path, form, self)
+                    return
                 with project_operation_lock(root, project, operation=f"web:{parsed.path}"):
                     handle_action(root, project, parsed.path, form, self)
             except Exception as exc:
@@ -558,26 +563,33 @@ def submit_web_task(root: Path, project: str, task_id: str, target=None) -> bool
 
 
 def run_task_by_id(root: Path, project: str, task_id: str, target=None) -> None:
+    from ai_apitest.execution.control import RunControl, RunCancelled, ExecutionRuntime, activate
     task = claim_task(root, project, task_id)
     if not task:
         return
     action = str(task["action"])
     stop_heartbeat = threading.Event()
+    control = RunControl(cancellation_check=lambda: cancellation_requested(root, project, task_id))
 
     def heartbeat() -> None:
         while not stop_heartbeat.wait(5):
             heartbeat_task(root, project, task_id)
 
     def progress(detail: str | None = None, **updates) -> None:
+        control.check()
         if detail is not None:
             updates["detail"] = detail
         persist_task_update(root, project, task_id, **updates)
 
     threading.Thread(target=heartbeat, name=f"iatest-{project}-{action}-heartbeat", daemon=True).start()
     try:
-        with project_operation_lock(root, project, operation=f"web-task:{action}"):
+        with activate(ExecutionRuntime(control=control)), project_operation_lock(root, project, operation=f"web-task:{action}"):
+            control.check()
             message = target(progress) if target else execute_web_task(root, project, str(task["kind"]), task.get("payload") or {}, progress)
+            control.check()
         persist_task_update(root, project, task_id, status="completed", stage="complete", detail="任务已完成", message=message or "")
+    except RunCancelled:
+        persist_task_update(root, project, task_id, status="cancelled", stage="cancelled", detail="任务已取消", message="已停止执行并完成资源清理")
     except Exception as exc:
         record_operational_error(
             root,
@@ -693,12 +705,22 @@ def execute_web_task(root: Path, project: str, kind: str, payload: dict, progres
         runnable_count = sum(1 for case in selected_cases if case_is_executable(case, execution_config))
         skipped_count = len(selected_cases) - runnable_count
         progress(f"开始执行 {runnable_count} 条可执行用例；{skipped_count} 条不可执行用例会记录为 skipped", stage="execute")
-        results = run_cases(root, project=project, case_ids=case_ids, run_scope=mode)
+        from ai_apitest.execution.options import RunOptions
+        isolation = str(payload.get("isolation") or "")
+        ranks = {"off": 0, "policy": 1, "process": 2, "container": 3}
+        configured_isolation = execution_config.get("sandbox", {}).get("mode", "policy")
+        if isolation and (isolation not in ranks or ranks[isolation] < ranks.get(configured_isolation, 1)):
+            raise ValueError("Web 执行不能降低配置要求的隔离级别")
+        results = run_cases(root, project=project, case_ids=case_ids, run_scope=mode, options=RunOptions(isolation=isolation))
         if not results:
             return "没有符合当前执行范围的用例，未发送请求且未生成空报告"
         passed = sum(1 for item in results if item.status == "passed")
         failed = sum(1 for item in results if item.status == "failed")
         skipped = sum(1 for item in results if item.status == "skipped")
+        from ai_apitest.execution.control import ACTIVE_RUNTIME, RunCancelled
+        if any(item.status == "cancelled" for item in results) or (ACTIVE_RUNTIME.get() and ACTIVE_RUNTIME.get().control.reason()):
+            write_report(root, results, project=project, artifact_language=artifact_language)
+            raise RunCancelled("用例执行已取消")
         progress(
             f"生成并审计执行报告：通过 {passed}，失败 {failed}，跳过 {skipped}",
             stage="audit",
@@ -718,13 +740,23 @@ def execute_web_task(root: Path, project: str, kind: str, payload: dict, progres
             analysis=analysis,
             artifact_language=artifact_language,
         )
-        rate = f"{(passed / len(results) * 100):.1f}%" if results else "-"
+        rate = f"{(passed / (passed + failed) * 100):.1f}%" if passed + failed else "-"
         return f"用例执行完成：共 {len(results)} 条，通过 {passed}，失败 {failed}，跳过 {skipped}，通过率 {rate}"
+
+    if kind == "schedule":
+        from ai_apitest.orchestrator.scheduler.runner import execute_scheduled_run
+        progress("开始执行定时任务", stage="execute")
+        execute_scheduled_run(root, project, payload["schedule"], artifact_language=artifact_language)
+        return "定时任务执行完成"
 
     raise ValueError(f"不支持的持久化 Web 任务类型：{kind}")
 
 
 def handle_action(root: Path, project: str, path: str, form: dict, handler) -> None:
+    if path == "/actions/cancel-task":
+        request_cancel(root, project, field(form, "task_id"))
+        handler.redirect(url_for("/cases", project, {"message": "已请求取消任务"}))
+        return
     if path == "/actions/discover":
         if active_task(root, project, "discover"):
             handler.redirect(url_for("/interfaces", project, {"message": "接口识别任务还在进行中，请稍后查看结果"}))
@@ -904,7 +936,7 @@ def handle_action(root: Path, project: str, path: str, form: dict, handler) -> N
             "run",
             "用例执行",
             kind="run",
-            payload={"mode": mode, "parallel": parallel},
+            payload={"mode": mode, "parallel": parallel, "isolation": field(form, "isolation")},
             resumable=False,
         )
         handler.redirect(url_for("/cases", project, {"message": "用例执行任务已开始，可关闭提示并继续使用其它功能"}))
@@ -927,13 +959,7 @@ def handle_action(root: Path, project: str, path: str, form: dict, handler) -> N
         config = load_config(root)
         for item in config.get("schedules", []):
             if str(item.get("name", "")) == name:
-                from ai_apitest.orchestrator.scheduler.runner import execute_scheduled_run
-                execute_scheduled_run(
-                    root,
-                    project,
-                    item,
-                    artifact_language=current_locale(),
-                )
+                start_task(root, project, "run", "定时任务执行", kind="schedule", payload={"schedule": item}, resumable=False)
                 break
         handler.redirect(url_for("/reports", project))
         return
@@ -1209,10 +1235,9 @@ def discover_source(
     if text is None:
         if progress:
             progress("读取接口文档", stage="read")
-        text = load_source_text(source)
     if progress:
         progress("解析接口文档", stage="parse")
-    endpoints, metadata = parse_api_document(text, source=source)
+    text, endpoints, metadata = load_and_parse_source(root, project, source, text=text)
     if progress:
         progress("正在调用大模型识别接口；如果模型响应较慢，可能需要等待较久", stage="llm")
     endpoints, metadata = apply_ai_discovery_if_configured(
@@ -1527,7 +1552,7 @@ def render_case_coverage_summary(
 ) -> str:
     from ai_apitest.domain.contracts import build_coverage_manifest
 
-    manifest = build_coverage_manifest(endpoints, cases)
+    manifest = build_coverage_manifest(endpoints, cases, config=config)
     stats = manifest["stats"]
     rows = manifest["rules"]
     if not rows:
@@ -1918,8 +1943,10 @@ def render_case_detail_modal(
 
 
 def render_case_edit_dialog(case, edit_id: str, delete_id: str, project: str) -> str:
+    from ai_apitest.core.models import execution_case_options
     request_data = json.dumps(
         {
+            **{name: value for name, value in execution_case_options(case).items() if value},
             "method": case.method,
             "path": case.path,
             "headers": case.headers,
@@ -4065,6 +4092,16 @@ def case_from_form(existing, form: dict):
             "cleanup_steps": cleanup_steps,
         }
     )
+    from ai_apitest.core.models import execution_case_options
+    for name in execution_case_options(existing):
+        if name in request_data:
+            payload[name] = request_data[name]
+    if any(type(payload[name]) is not bool for name in ("parallel_safe", "retry_safe")):
+        raise ValueError("parallel_safe 和 retry_safe 必须是布尔值")
+    if any(not isinstance(payload[name], dict) for name in ("variables", "poll")):
+        raise ValueError("variables 和 poll 必须是 JSON 对象")
+    if not isinstance(payload["resources"], list) or any(not isinstance(name, str) or not name for name in payload["resources"]):
+        raise ValueError("resources 必须是非空资源名称数组")
     for name in ("headers", "path_params", "query", "parameter_serialization"):
         if not isinstance(payload[name], dict):
             raise ValueError(f"请求数据中的 {name} 必须是 JSON 对象")

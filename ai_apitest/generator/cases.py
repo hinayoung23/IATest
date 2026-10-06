@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ai_apitest.core.config import load_config
+
 import json
 import mimetypes
 import re
@@ -20,6 +22,7 @@ from ai_apitest.core.artifact_language import (
     set_current_artifact_language,
 )
 from ai_apitest.core.files import atomic_write_text
+from ai_apitest.core.sampling import sample_from_schema as constrained_sample
 from ai_apitest.core.paths import (
     project_cases_file,
     project_coverage_manifest_file,
@@ -869,7 +872,7 @@ def default_path_params(endpoint: Endpoint) -> dict[str, Any]:
 
 def sample_path_value(name: str) -> str:
     if name.lower() == "email":
-        return "test123@mail.tempbox.cn"
+        return "test@example.invalid"
     if name.lower().endswith("id"):
         return "1"
     return "sample"
@@ -939,7 +942,10 @@ def success_assertions(endpoint: Endpoint) -> list[Assertion]:
         response.get("schema"),
         *(media.get("schema") for media in content.values() if isinstance(media, dict)),
     ]
-    schema = next((item for item in schemas if isinstance(item, dict)), {})
+    schema = next((item for item in schemas if isinstance(item, (dict, bool))), None)
+    if schema is not None:
+        assertions.append(Assertion(type="json_schema", target="$", expected=schema))
+    schema = schema if isinstance(schema, dict) else {}
     if schema.get("type") == "array":
         assertions.append(Assertion(type="json_path", target="$", operator="is_array", expected=True))
         return assertions
@@ -948,7 +954,7 @@ def success_assertions(endpoint: Endpoint) -> list[Assertion]:
     required = (
         {str(item) for item in declared_required}
         if isinstance(declared_required, list)
-        else {str(item) for item in properties}
+        else set()
     )
     for name, property_schema in properties.items():
         if str(name) not in required or not isinstance(property_schema, dict):
@@ -1091,32 +1097,7 @@ def has_path_params(endpoint: Endpoint) -> bool:
 
 
 def sample_from_schema(schema: dict[str, Any]) -> Any:
-    if not schema:
-        return ""
-    if "example" in schema:
-        return schema["example"]
-    if "default" in schema:
-        return schema["default"]
-    if "enum" in schema and schema["enum"]:
-        return schema["enum"][0]
-    ref = schema.get("$ref")
-    if ref:
-        return f"<{ref.rsplit('/', 1)[-1]}>"
-    schema_type = schema.get("type", "object" if "properties" in schema else "string")
-    if schema_type == "object":
-        return {
-            name: sample_from_schema(prop)
-            for name, prop in schema.get("properties", {}).items()
-        }
-    if schema_type == "array":
-        return [sample_from_schema(schema.get("items", {}))]
-    if schema_type == "integer":
-        return 1
-    if schema_type == "number":
-        return 1.0
-    if schema_type == "boolean":
-        return True
-    return "string"
+    return constrained_sample(schema)
 
 
 def save_cases(
@@ -1146,7 +1127,7 @@ def save_cases(
 
     write_json(
         project_coverage_manifest_file(root, project),
-        build_coverage_manifest(endpoints, normalized),
+        build_coverage_manifest(endpoints, normalized, config=load_config(root)),
     )
     return path
 

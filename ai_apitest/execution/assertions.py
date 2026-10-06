@@ -7,6 +7,7 @@ from typing import Any
 from jsonpath_ng.ext import parse as parse_json_path
 
 from ai_apitest.core.models import Assertion
+from ai_apitest.core.schema import schema_errors
 
 
 class _MissingValue:
@@ -18,6 +19,24 @@ MISSING = _MissingValue()
 
 
 def evaluate(assertion: Assertion, response: dict[str, Any]) -> str | None:
+    if assertion.type == "custom":
+        from ai_apitest.execution.control import ACTIVE_RUNTIME
+        runtime = ACTIVE_RUNTIME.get()
+        handler = runtime.plugins.assertions.get(assertion.target) if runtime and runtime.plugins else None
+        if handler is None:
+            return f"自定义断言未注册：{assertion.target}"
+        try:
+            result = handler(assertion, response, runtime.context)
+            if result is not None and not isinstance(result, str):
+                return "自定义断言必须返回 None（通过）或错误字符串"
+            return result
+        except Exception as exc:
+            return f"自定义断言执行失败：{exc}"
+    if assertion.type == "json_schema":
+        if response.get("json_valid") is False or "json" not in response:
+            return "json_schema: 响应不是有效 JSON"
+        errors = schema_errors(response.get("json"), assertion.expected)
+        return "json_schema: " + "; ".join(errors) if errors else None
     actual = resolve_actual(assertion, response)
     expected = assertion.expected
     operator = assertion.operator
@@ -40,10 +59,12 @@ def resolve_actual(assertion: Assertion, response: dict[str, Any]) -> Any:
     if assertion.type == "json_path":
         return json_path_value(response.get("json"), assertion.target, missing=MISSING)
     if assertion.type == "header":
-        return response.get("headers", {}).get(assertion.target.lower())
+        return next((value for key, value in response.get("headers", {}).items() if key.lower() == assertion.target.lower()), MISSING)
     if assertion.type == "body_contains":
         return response.get("text", "")
-    return None
+    if assertion.type == "response_time":
+        return response.get("elapsed_ms", MISSING)
+    return MISSING
 
 
 def compare(actual: Any, operator: str, expected: Any) -> bool:

@@ -1,0 +1,6 @@
+recursive-include docs *.md
+include examples/demo_server.py
+include examples/openapi.json
+include examples/test_support_server.py
+include examples/fixture-providers.json
+include examples/Dockerfile.sandbox

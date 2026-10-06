@@ -84,6 +84,7 @@ def ensure_task_schema(conn: sqlite3.Connection) -> None:
         ("resumable", "integer not null default 1"),
         ("attempt_count", "integer not null default 0"),
         ("max_attempts", "integer not null default 2"),
+        ("cancel_requested", "integer not null default 0"),
     ):
         ensure_task_column(conn, column, definition)
     index = conn.execute(
@@ -117,9 +118,10 @@ def recover_stale_tasks(
         cursor = conn.execute(
             """
             update web_tasks
-            set status = case when resumable = 1 and attempt_count < max_attempts then 'queued' else 'failed' end,
-                stage = case when resumable = 1 and attempt_count < max_attempts then 'queued' else 'interrupted' end,
+            set status = case when cancel_requested = 1 then 'cancelled' when resumable = 1 and attempt_count < max_attempts then 'queued' else 'failed' end,
+                stage = case when cancel_requested = 1 then 'cancelled' when resumable = 1 and attempt_count < max_attempts then 'queued' else 'interrupted' end,
                 detail = case
+                    when cancel_requested = 1 then '任务已取消'
                     when resumable = 1 and attempt_count < max_attempts then '服务进程中断，任务等待自动恢复'
                     else '服务进程已中断，任务未能安全恢复'
                 end,
@@ -208,8 +210,8 @@ def create_task(
         conn.execute(
             """
             update web_tasks
-            set status = case when resumable = 1 and attempt_count < max_attempts then 'queued' else 'failed' end,
-                stage = case when resumable = 1 and attempt_count < max_attempts then 'queued' else 'interrupted' end,
+            set status = case when cancel_requested = 1 then 'cancelled' when resumable = 1 and attempt_count < max_attempts then 'queued' else 'failed' end,
+                stage = case when cancel_requested = 1 then 'cancelled' when resumable = 1 and attempt_count < max_attempts then 'queued' else 'interrupted' end,
                 detail = case when resumable = 1 and attempt_count < max_attempts then '服务进程中断，任务等待自动恢复' else '服务进程已中断，任务未能安全恢复' end,
                 message = case when resumable = 1 and attempt_count < max_attempts then '任务因服务重启或进程退出而中断，正在等待自动恢复' else '任务因服务重启或进程退出而中断，请重新发起' end,
                 owner_pid = null,
@@ -272,6 +274,24 @@ def update_task(root: Path, project: str, task_id: str, **updates: Any) -> bool:
 
 def heartbeat_task(root: Path, project: str, task_id: str) -> bool:
     return update_task(root, project, task_id, heartbeat_at=time.time())
+
+
+def request_cancel(root: Path, project: str, task_id: str) -> bool:
+    with task_connection(root, project) as conn:
+        cursor = conn.execute(
+            """update web_tasks set cancel_requested = 1, resumable = 0,
+                status = case when status = 'queued' then 'cancelled' else status end,
+                detail = '已请求取消，正在停止执行并清理资源', updated_at = ?
+                where project = ? and id = ? and status in ('queued', 'running')""",
+            (time.time(), safe_project_name(project), task_id),
+        )
+        return bool(cursor.rowcount)
+
+
+def cancellation_requested(root: Path, project: str, task_id: str) -> bool:
+    with task_connection(root, project) as conn:
+        row = conn.execute("select cancel_requested from web_tasks where project = ? and id = ?", (safe_project_name(project), task_id)).fetchone()
+    return bool(row and row[0])
 
 
 def queued_tasks(root: Path, project: str, *, limit: int = 20) -> list[dict[str, Any]]:

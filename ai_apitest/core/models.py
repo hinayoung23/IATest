@@ -40,6 +40,7 @@ class TestStep:
     body: Any = None
     assertions: list[Assertion] = field(default_factory=list)
     extract: dict[str, str] = field(default_factory=dict)
+    poll: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -71,6 +72,19 @@ class TestCase:
     rule_ids: list[str] = field(default_factory=list)
     coverage_partition_ids: list[str] = field(default_factory=list)
     fixture_requirements: list[str] = field(default_factory=list)
+    variables: dict[str, Any] = field(default_factory=dict)
+    dataset: Any = None
+    dataset_id: str = ""
+    origin_case_id: str = ""
+    identity: str = ""
+    resources: list[str] = field(default_factory=list)
+    parallel_safe: bool = False
+    retry_safe: bool = False
+    poll: dict[str, Any] = field(default_factory=dict)
+
+
+def execution_case_options(case: TestCase) -> dict[str, Any]:
+    return {name: getattr(case, name) for name in ("variables", "dataset", "identity", "resources", "parallel_safe", "retry_safe", "poll")}
 
 
 @dataclass(slots=True)
@@ -93,3 +107,8 @@ class CaseResult:
     design_method: str = ""
     setup: dict[str, Any] = field(default_factory=dict)
     cleanup: dict[str, Any] = field(default_factory=dict)
+    run_id: int | None = None
+    origin_case_id: str = ""
+    dataset_id: str = ""
+    flaky: bool = False
+    attempt_history: list[dict[str, Any]] = field(default_factory=list)

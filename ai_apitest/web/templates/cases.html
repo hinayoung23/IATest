@@ -14,6 +14,7 @@
     {{HIDDEN_PROJECT}}
     <div><label>执行模式</label><select name="mode">{{EXECUTION_MODE_OPTIONS}}</select></div>
     <div><label>并行数</label><input type="number" name="parallel" value="{{PARALLEL}}" min="1" max="32" placeholder="并行线程数"></div>
+    <div><label>执行隔离</label><select name="isolation"><option value="">使用项目配置</option><option value="process">独立进程</option><option value="container">容器</option></select></div>
     <button>▶ 执行用例</button>
   </form>
 

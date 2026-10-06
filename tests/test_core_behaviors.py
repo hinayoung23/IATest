@@ -931,8 +931,8 @@ def test_two_phase_case_generation_forwards_stream_callback(monkeypatch) -> None
 
 
 def test_case_generation_prompt_preserves_runtime_placeholders() -> None:
-    prompt = user_prompt([Endpoint(method="GET", path="/api/check/{email}")])
-    assert '"email":"{{email}}"' in prompt
+    prompt = user_prompt([Endpoint(method="GET", path="/users/{id}")])
+    assert '"id":"{{id}}"' in prompt
 
 
 def test_case_supplement_prompt_contains_scenario_and_existing_cases() -> None:

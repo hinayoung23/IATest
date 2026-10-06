@@ -2,6 +2,8 @@
 
 {{BATCH_CONTEXT}}
 
+示例中的路径仅演示结构，实际输出只能引用当前接口契约中的路径、参数和响应字段。
+
 ## 输出格式
 
 只输出 JSON 数组，不要 Markdown，不要解释。每项字段：
@@ -9,10 +11,10 @@
 {
   "scenario_id": "SCN-{module}-{序号}",
   "endpoint_method": "GET",
-  "endpoint_path": "/api/generate",
+  "endpoint_path": "/health",
   "design_method": "happy_path",
   "priority": "P0",
-  "title_hint": "无 prefix 生成邮箱",
+  "title_hint": "健康检查成功",
   "coverage_tags": ["happy_path", "status_code_coverage"],
   "expected_basis": "responses.200.example",
   "data_dependency": null
@@ -26,14 +28,14 @@
   "endpoint_path": "",
   "design_method": "dependency_chain",
   "priority": "P0",
-  "title_hint": "生成邮箱后检查并删除",
+  "title_hint": "创建用户后查询并删除",
   "coverage_tags": ["dependency_chain"],
   "expected_basis": null,
   "data_dependency": null,
   "chain_steps": [
-    {"method": "GET", "path": "/api/generate", "extract": {"email": "$.email"}},
-    {"method": "GET", "path": "/api/check/{email}", "path_params": {"email": "{% raw %}{{email}}{% endraw %}"}},
-    {"method": "DELETE", "path": "/api/delete/{email}", "path_params": {"email": "{% raw %}{{email}}{% endraw %}"}}
+    {"method": "POST", "path": "/users", "extract": {"id": "$.id"}},
+    {"method": "GET", "path": "/users/{id}", "path_params": {"id": "{% raw %}{{id}}{% endraw %}"}},
+    {"method": "DELETE", "path": "/users/{id}", "path_params": {"id": "{% raw %}{{id}}{% endraw %}"}}
   ]
 }
 

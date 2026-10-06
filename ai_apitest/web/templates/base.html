@@ -51,6 +51,11 @@
           <span data-task-status>后台处理中</span>
         </div>
         <button type="button" class="ghost" data-task-close>关闭</button>
+        <form method="post" action="/actions/cancel-task" data-task-cancel hidden>
+          <input type="hidden" name="project" value="{{PROJECT}}">
+          <input type="hidden" name="task_id" value="">
+          <button type="submit" class="ghost">取消任务</button>
+        </form>
       </div>
       <ol class="task-steps" data-task-steps></ol>
       <p data-task-detail>后台任务正在执行，请稍作等待。</p>

@@ -1,0 +1,8 @@
+# Build locally after `uv build`; no framework source or project secrets copied.
+FROM python:3.12-slim
+COPY dist/*.whl /tmp/wheels/
+RUN python -m pip install --no-cache-dir /tmp/wheels/*.whl && rm -r /tmp/wheels
+ENV PYTHONDONTWRITEBYTECODE=1
+USER 65532:65532
+WORKDIR /tmp
+ENTRYPOINT ["python", "-I", "-B", "-m", "ai_apitest.execution.worker"]

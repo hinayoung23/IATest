@@ -24,6 +24,13 @@ _CURRENT_LOCALE: ContextVar[str] = ContextVar("iatest_web_locale", default="zh")
 # produced from stored enum values and composed statistics rather than fixed
 # HTML text nodes.
 _RUNTIME_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "执行隔离": {"en": "Execution isolation", "ja": "実行の分離", "fr": "Isolation d’exécution", "ru": "Изоляция выполнения"},
+    "使用项目配置": {"en": "Use project settings", "ja": "プロジェクト設定を使用", "fr": "Utiliser les paramètres du projet", "ru": "Использовать настройки проекта"},
+    "独立进程": {"en": "Separate process", "ja": "独立プロセス", "fr": "Processus séparé", "ru": "Отдельный процесс"},
+    "容器": {"en": "Container", "ja": "コンテナ", "fr": "Conteneur", "ru": "Контейнер"},
+    "取消任务": {"en": "Cancel task", "ja": "タスクをキャンセル", "fr": "Annuler la tâche", "ru": "Отменить задачу"},
+    "已请求取消任务": {"en": "Cancellation requested", "ja": "キャンセルを要求しました", "fr": "Annulation demandée", "ru": "Запрошена отмена"},
+    "任务已取消": {"en": "Task cancelled", "ja": "タスクをキャンセルしました", "fr": "Tâche annulée", "ru": "Задача отменена"},
     "接口 Mock 配置已保存": {"en": "API Mock settings saved", "ja": "API Mock 設定を保存しました", "fr": "Paramètres API Mock enregistrés", "ru": "Настройки API Mock сохранены"},
     "接口 Mock 已关闭": {"en": "API Mock stopped", "ja": "API Mock を停止しました", "fr": "API Mock arrêté", "ru": "API Mock остановлен"},
     "接口 Mock 当前未开启": {"en": "API Mock is not running", "ja": "API Mock は起動していません", "fr": "API Mock n’est pas actif", "ru": "API Mock не запущен"},

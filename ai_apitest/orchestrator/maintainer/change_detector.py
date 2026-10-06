@@ -30,4 +30,5 @@ def endpoint_signature(endpoint: Endpoint) -> dict:
         "operation_id": endpoint.operation_id,
         "deprecated": endpoint.deprecated,
         "security": endpoint.security,
+        "business_rules": endpoint.business_rules,
     }

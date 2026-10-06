@@ -1,0 +1,29 @@
+{
+  "environments": {"local": {"base_url": "http://127.0.0.1:8799"}},
+  "fixtures": {
+    "providers": {
+      "time_control": {
+        "enabled": true,
+        "type": "http",
+        "check": {"url": "http://127.0.0.1:8799/health"},
+        "prepare": {
+          "url": "http://127.0.0.1:8799/__test__/prepare",
+          "json": {"id": "{{uuid}}", "advance_seconds": 120, "messages": []},
+          "extract": {"mailbox_id": "$.id"}
+        },
+        "cleanup": {"url": "http://127.0.0.1:8799/__test__/cleanup", "json": {"id": "{{mailbox_id}}"}}
+      },
+      "mail_injection": {
+        "enabled": true,
+        "type": "http",
+        "check": {"url": "http://127.0.0.1:8799/health"},
+        "prepare": {
+          "url": "http://127.0.0.1:8799/__test__/prepare",
+          "json": {"id": "{{uuid}}", "messages": [{"subject": "iatest fixture", "body": "controlled message"}]},
+          "extract": {"mailbox_id": "$.id"}
+        },
+        "cleanup": {"url": "http://127.0.0.1:8799/__test__/cleanup", "json": {"id": "{{mailbox_id}}"}}
+      }
+    }
+  }
+}

@@ -1,5 +1,7 @@
 # 测试用例字段格式规范
 
+数据集、variables、identity、poll、resources、parallel_safe、retry_safe、json_schema 和 response_time 的完整配置与示例见[框架补充与使用说明](framework-improvements.md)。这些字段在 Markdown 的 `iatest-cases-json` 对象中保存；数据集行 ID 只在执行时展开。
+
 ## 用例编号 id
 
 统一格式：`TC-模块-四位起步序号`

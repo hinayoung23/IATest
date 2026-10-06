@@ -48,8 +48,11 @@ from ai_apitest.context.dependencies import synchronize_project_dependencies, ve
 from ai_apitest.data.agent_runs import AgentRunRepository
 from ai_apitest.context.extraction import retry_due_report_extractions
 from ai_apitest.application.discovery import normalize_document_for_agent
-from ai_apitest.discovery.document import load_source_text, parse_api_document
+from ai_apitest.discovery.document import load_source_text, parse_api_document, load_and_parse_source
 from ai_apitest.execution.runner import run_cases
+from ai_apitest.execution.options import RunOptions
+from ai_apitest.report.export import execution_metrics, write_json_results, write_junit
+from ai_apitest.report.storage import latest_run_metadata
 from ai_apitest.generator.cases import load_cases_from_markdown, save_cases
 from ai_apitest.mock_server import build_mock_server
 from ai_apitest.orchestrator.maintainer.auto_updater import auto_update_cases_with_llm, impacted_cases
@@ -103,8 +106,7 @@ def discover(source: str, project: str = "default") -> None:
 
 def _discover(root: Path, source: str, project: str) -> None:
     set_current_artifact_language(configured_artifact_language(load_config(root)))
-    text = load_source_text(source)
-    endpoints, metadata = parse_api_document(text, source=source)
+    text, endpoints, metadata = load_and_parse_source(root, project, source, allow_source_file=True, allow_source_url=True)
     endpoints, metadata = apply_ai_discovery_if_configured(root, text, endpoints, metadata, project=project)
     metadata["source"] = source
     old_endpoints = [endpoint_from_dict(item) for item in read_json(project_docs_file(root, project), [])]
@@ -197,18 +199,49 @@ def llm_check_command(
 
 
 @app.command()
-def run(project: str = "default", cases: str = "", base_url: str = "") -> None:
+def run(
+    project: str = "default", cases: str = "", base_url: str = "",
+    environment: str = typer.Option("", "--env", help="本次运行的环境名称"),
+    tags: str = typer.Option("", help="逗号分隔标签，匹配任一标签"),
+    priority: str = typer.Option("", help="逗号分隔优先级"),
+    shard: str = typer.Option("1/1", help="分片，例如 1/3"),
+    seed: str = typer.Option("", help="固定随机种子"),
+    timeout: float | None = typer.Option(None, help="整次执行的总时限（秒）"),
+    retries: int = typer.Option(0, help="安全用例失败重试次数，保留首次失败"),
+    rerun_failed: bool = typer.Option(False, help="重跑上一次执行的失败用例"),
+    no_ai: bool = typer.Option(False, "--no-ai", help="执行和报告均不调用大模型"),
+    junit: Path | None = typer.Option(None, help="JUnit XML 输出路径"),
+    json_output: Path | None = typer.Option(None, "--json-output", help="结构化 JSON 输出路径"),
+    allow_empty: bool = typer.Option(False, help="允许空执行范围返回成功"),
+    allow_all_skipped: bool = typer.Option(False, help="允许全部跳过返回成功"),
+    fail_on_flaky: bool = typer.Option(False, help="重试恢复的用例也令命令失败"),
+    isolation: str = typer.Option("", help="隔离模式：policy/process/container/off；默认使用配置"),
+) -> None:
     root = cwd_root()
     init_project(root, project)
     case_ids = {item.strip() for item in cases.split(",") if item.strip()} or None
+    try:
+        shard_index, shard_count = [int(value) for value in shard.split("/")]
+        options = RunOptions(environment=environment, tags={item.strip() for item in tags.split(",") if item.strip()}, priorities={item.strip().upper() for item in priority.split(",") if item.strip()}, shard_index=shard_index, shard_count=shard_count, seed=seed or None, timeout_seconds=timeout, rerun_failed=rerun_failed, retries=retries, isolation=isolation)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     with project_operation_lock(root, project, operation="cli:run"):
         with console.status("正在执行用例..."):
             run_scope = "custom" if case_ids else "full"
-            results = run_cases(root, case_ids=case_ids, base_url=base_url or None, project=project, run_scope=run_scope)
+            results = run_cases(root, case_ids=case_ids, base_url=base_url or None, project=project, run_scope=run_scope, options=options)
             if not results:
+                if json_output:
+                    write_json_results(json_output, [], {"project": project})
+                if junit:
+                    write_junit(junit, [], project=project)
                 console.print("[yellow]没有符合执行范围的用例，未生成空报告。[/yellow]")
-                return
-            ai_review, analysis = build_ai_report_bundle(root, project, results)
+                raise typer.Exit(0 if allow_empty else 5)
+            metadata = latest_run_metadata(root, project)
+            if json_output:
+                write_json_results(json_output, results, metadata)
+            if junit:
+                write_junit(junit, results, project=project, metadata=metadata)
+            ai_review, analysis = ("", "") if no_ai or any(item.status == "cancelled" for item in results) else build_ai_report_bundle(root, project, results)
             report = write_report(
                 root,
                 results,
@@ -218,8 +251,59 @@ def run(project: str = "default", cases: str = "", base_url: str = "") -> None:
             )
     passed = sum(1 for item in results if item.status == "passed")
     failed = sum(1 for item in results if item.status == "failed")
-    console.print(f"执行完成: total={len(results)} passed={passed} failed={failed}")
+    console.print(f"执行完成: total={len(results)} passed={passed} failed={failed} skipped={sum(item.status == 'skipped' for item in results)} flaky={sum(item.flaky for item in results)}")
     console.print(f"[green]报告:[/green] {report}")
+    metrics = execution_metrics(results)
+    if metrics["cancelled"]:
+        raise typer.Exit(130)
+    if failed or (fail_on_flaky and metrics["flaky"]):
+        raise typer.Exit(1)
+    if not metrics["executed"] and not allow_all_skipped:
+        raise typer.Exit(5)
+
+
+@app.command("fixtures-check")
+def fixtures_check(project: str = "default", probe: bool = False, exercise: bool = False) -> None:
+    """检查夹具配置；--probe 调用只读健康检查，--exercise 实际准备并清理。"""
+    import json
+    import httpx
+    from ai_apitest.execution.fixture_checks import check_fixtures
+    from ai_apitest.execution.transport import client_options
+    from ai_apitest.core.redaction import redact
+    from ai_apitest.core.sandbox import SandboxPolicy, policy_scope
+    root = cwd_root()
+    config = load_config(root)
+    environment = current_environment(config)
+    policy = SandboxPolicy.from_config(root, config, project=project, base_url=str(environment.get("base_url", "")))
+    with project_operation_lock(root, project, operation="fixture-check"), policy_scope(policy):
+        cases = load_cases_from_markdown(root, project)
+        if policy.mode in {"process", "container"}:
+            import uuid
+            from ai_apitest.core.models import TestCase
+            from ai_apitest.execution.isolation import run_isolated
+            from ai_apitest.execution.control import RunControl, handle_interrupt
+            config.setdefault("execution", {})["namespace"] = uuid.uuid4().hex
+            names = set(config.get("fixtures", {}).get("providers", {})) | {name for case in cases for name in case.fixture_requirements}
+            checks = [TestCase(f"fixture-check-{index}", name, "GET", "/", fixture_requirements=[name]) for index, name in enumerate(sorted(names))]
+            control = RunControl()
+            with handle_interrupt(control):
+                rows, _ = run_isolated(checks, environment, config, control, policy, [], operation="fixtures-check", fixture_options={"probe": probe, "exercise": exercise, "required_names": sorted({name for case in cases for name in case.fixture_requirements})}) if checks else ([], {})
+            results = []
+            for row in rows:
+                value = dict(row.response.get("fixture_check") or {"name": row.title})
+                if row.status in {"failed", "cancelled"}:
+                    value.update(status="failed", error=row.error or value.get("error", ""))
+                    if row.cleanup:
+                        value["cleanup"] = row.cleanup
+                results.append(value)
+        else:
+            with httpx.Client(**client_options(environment, 10)) as client:
+                results = check_fixtures(config, cases, client, probe=probe, exercise=exercise)
+    console.print_json(json.dumps(redact(results), ensure_ascii=False))
+    if policy.mode in {"process", "container"} and any(row.status == "cancelled" for row in rows):
+        raise typer.Exit(130)
+    if any(row["status"] in {"failed", "missing"} for row in results):
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -259,8 +343,7 @@ def maintain(
 
 def _maintain(root: Path, project: str, source: str, *, ai_update: bool, write: bool) -> None:
     set_current_artifact_language(configured_artifact_language(load_config(root)))
-    text = load_source_text(source)
-    new_endpoints, new_metadata = parse_api_document(text, source=source)
+    text, new_endpoints, new_metadata = load_and_parse_source(root, project, source, allow_source_file=True, allow_source_url=True)
     old_endpoints = [endpoint_from_dict(item) for item in read_json(project_docs_file(root, project), [])]
     current_metadata = read_json(project_metadata_file(root, project), {})
     if not isinstance(current_metadata, dict):

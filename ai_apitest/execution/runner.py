@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 import threading
 import time
 import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -19,11 +20,18 @@ import httpx
 from ai_apitest.core.config import current_environment, load_config
 from ai_apitest.core.locking import project_operation_lock
 from ai_apitest.core.models import Assertion, CaseResult, Endpoint, TestCase, TestStep
-from ai_apitest.core.paths import project_docs_file, project_metadata_file, project_root
+from ai_apitest.core.paths import project_docs_file, project_metadata_file, project_root, project_cases_file
 from ai_apitest.core.serde import endpoint_from_dict, read_json, step_from_dict
+from ai_apitest.core.sandbox import ACTIVE_POLICY, SandboxPolicy, SandboxViolation, check_url, policy_scope, read_file, positive
 from ai_apitest.execution.assertions import evaluate, json_path
 from ai_apitest.execution.fixtures import FixtureManager, case_is_executable
-from ai_apitest.generator.cases import load_cases_from_markdown
+from ai_apitest.execution.options import RunOptions
+from ai_apitest.execution.datasets import expand_cases, seeded_variables
+from ai_apitest.execution.control import ACTIVE_RUNTIME, ExecutionRuntime, RunControl, RunCancelled, activate, check_control, cleanup_control, handle_interrupt
+from ai_apitest.execution.transport import client_options, isolated_client
+from ai_apitest.execution.auth import AuthManager
+from ai_apitest.execution.plugins import PluginRegistry
+from ai_apitest.generator.cases import parse_cases_markdown
 from ai_apitest.context.storage import mark_suspect_lessons_after_run, prune_context_history, save_execution_trend, update_known_issue_lifecycle
 from ai_apitest.report.storage import save_run
 
@@ -80,7 +88,12 @@ class RequestRateLimiter:
                     if policy is not None:
                         self._requests[key].append(now)
                     return waited
-            self._sleeper(delay)
+            check_control()
+            runtime = ACTIVE_RUNTIME.get()
+            if runtime is not None and self._sleeper is time.sleep:
+                runtime.control.wait(delay)
+            else:
+                self._sleeper(delay)
             waited += delay
 
     def penalize(
@@ -173,8 +186,14 @@ def build_request_rate_limiter(root: Path, project: str, config: dict[str, Any])
     return RequestRateLimiter(list(policies.values()))
 
 
-def load_cases(root: Path, project: str = "default") -> list[TestCase]:
-    return load_cases_from_markdown(root, project)
+def load_cases(root: Path, project: str = "default", *, max_bytes: int = 64_000_000) -> list[TestCase]:
+    path = project_cases_file(root, project)
+    if not path.exists():
+        return []
+    # Framework-owned plan input is read by the controller; upload/data allowlists
+    # govern case-supplied paths, not the controller's own project artifacts.
+    with policy_scope(None):
+        return parse_cases_markdown(read_file(path, max_bytes).decode("utf-8"))
 
 
 def run_cases(
@@ -184,6 +203,9 @@ def run_cases(
     project: str = "default",
     *,
     run_scope: str = "",
+    options: RunOptions | None = None,
+    control: RunControl | None = None,
+    plugins: PluginRegistry | None = None,
 ) -> list[CaseResult]:
     root = root or project_root()
     with project_operation_lock(root, project, operation=f"run:{run_scope or 'full'}"):
@@ -193,6 +215,9 @@ def run_cases(
             base_url=base_url,
             project=project,
             run_scope=run_scope,
+            options=options,
+            control=control,
+            plugins=plugins,
         )
 
 
@@ -203,25 +228,65 @@ def _run_cases_unlocked(
     project: str = "default",
     *,
     run_scope: str = "",
+    options: RunOptions | None = None,
+    control: RunControl | None = None,
+    plugins: PluginRegistry | None = None,
 ) -> list[CaseResult]:
     config = load_config(root)
+    options = options or RunOptions()
+    if options.isolation:
+        config.setdefault("sandbox", {})["mode"] = options.isolation
+    if options.environment:
+        config["default_environment"] = options.environment
     environment = current_environment(config)
+    metadata_target = False
     if base_url:
         environment["base_url"] = base_url
-    else:
+    elif not environment.get("base_url"):
         metadata = read_json(project_metadata_file(root, project), {})
         if metadata.get("base_url"):
             environment["base_url"] = metadata["base_url"]
-    cases = load_cases(root, project)
-    if case_ids is not None:
-        requested_ids = {str(item) for item in case_ids}
-        known_ids = {case.id for case in cases}
-        unknown_ids = sorted(requested_ids - known_ids)
-        if unknown_ids:
-            raise ValueError(f"指定的用例不存在：{', '.join(unknown_ids)}")
-        cases = [case for case in cases if case.id in requested_ids]
+            metadata_target = True
+    policy = SandboxPolicy.from_config(root, config, project=project, base_url="" if metadata_target else str(environment.get("base_url", "")))
+    if metadata_target:
+        policy.check_url(str(environment["base_url"]))
+    # TLS key material may be loaded by the HTTP client, but never uploaded by a case.
+    cert = environment.get("client_cert")
+    denied = [value for value in (environment.get("verify_tls"), cert if isinstance(cert, str) else None) if isinstance(value, str)]
+    if isinstance(cert, dict):
+        denied += [cert[key] for key in ("certfile", "keyfile") if cert.get(key)]
+    policy = replace(policy, denied_paths=policy.denied_paths + tuple((root / Path(value).expanduser()).resolve() for value in denied))
+    with policy_scope(policy):
+        return _run_cases_with_policy(root, config, environment, case_ids, project, run_scope=run_scope, options=options, control=control, plugins=plugins)
+
+
+def _run_cases_with_policy(root: Path, config: dict, environment: dict, case_ids: set[str] | None, project: str, *, run_scope: str, options: RunOptions, control: RunControl | None, plugins: PluginRegistry | None) -> list[CaseResult]:
+    max_input = int(positive(config.get("sandbox", {}), "max_input_bytes", 64_000_000))
+    cases = options.select(expand_cases(load_cases(root, project, max_bytes=max_input), root, config), case_ids)
+    if options.rerun_failed:
+        from ai_apitest.report.storage import latest_results
+        _, previous = latest_results(root, project)
+        failed_ids = {row["case_id"] for row in previous if row["status"] == "failed"}
+        cases = [case for case in cases if case.id in failed_ids]
     if not cases:
         return []
+    seed = options.seed if options.seed is not None else config.get("execution", {}).get("random_seed")
+    seed = seed if seed is not None else uuid.uuid4().hex
+    config.setdefault("execution", {})["random_seed"] = seed
+    config["execution"]["failure_retries"] = options.retries
+    namespace = uuid.uuid4().hex
+    config["execution"]["namespace"] = namespace
+    inherited = ACTIVE_RUNTIME.get()
+    timeout_seconds = options.timeout_seconds or config["execution"].get("total_timeout_seconds")
+    control = control or RunControl(timeout_seconds=timeout_seconds,
+        cancelled=inherited.control.cancelled if inherited else threading.Event(),
+        cancellation_check=inherited.control.cancellation_check if inherited else None)
+    policy = ACTIVE_POLICY.get()
+    if plugins and policy and policy.mode != "off" and not policy.allow_plugins:
+        raise SandboxViolation("沙箱默认禁用插件；可信插件需显式设置 sandbox.allow_plugins=true")
+    from ai_apitest.execution.provenance import run_metadata
+    metadata = run_metadata(root, project, environment, cases, options, seed, config)
+    metadata["sandbox"] = {"mode": policy.mode, "namespace": namespace, "allow_plugins": policy.allow_plugins, "allowed_origins": sorted(policy.allowed_origins)}
     executable_by_id = {case.id: case_is_executable(case, config) for case in cases}
     runnable_cases = [case for case in cases if executable_by_id[case.id]]
     skipped_by_id = {
@@ -231,45 +296,68 @@ def _run_cases_unlocked(
     }
     executed_results: list[CaseResult] = []
     if runnable_cases:
-        timeout = float(config.get("execution", {}).get("timeout_seconds", 20))
         rate_limiter = build_request_rate_limiter(root, project, config)
-        with httpx.Client(timeout=timeout) as client:
-            fixture_manager = FixtureManager(config, client)
-            environment_setup = run_environment_setup(environment, config, client, rate_limiter=rate_limiter)
-            if environment_setup.get("status") in {"failed", "skipped"}:
-                executed_results = [environment_setup_failed_result(case, environment_setup) for case in runnable_cases]
+        with handle_interrupt(control):
+            if policy.mode in {"process", "container"}:
+                if plugins is not None:
+                    raise ValueError("隔离进程仅支持通过 entry point 注册的插件")
+                from ai_apitest.execution.isolation import run_isolated
+                executed_results, isolation_evidence = run_isolated(runnable_cases, environment, config, control, policy, list(rate_limiter._policies.values()))
+                metadata["sandbox"].update(isolation_evidence)
             else:
-                executed_results = run_ordered_cases(
-                    runnable_cases,
-                    environment,
-                    config,
-                    client,
-                    environment_setup.get("context", {}),
-                    rate_limiter=rate_limiter,
-                    fixture_manager=fixture_manager,
-                )
-            environment_teardown = run_environment_teardown(
-                environment,
-                config,
-                client,
-                environment_setup.get("context", {}),
-                rate_limiter=rate_limiter,
-            )
-            if environment_teardown:
-                for result in executed_results:
-                    result.cleanup = merge_lifecycle_result(result.cleanup, "environment_teardown", environment_teardown)
-                    apply_lifecycle_failure(result, environment_teardown, config, "环境清理失败")
+                executed_results = execute_runnable_cases(runnable_cases, environment, config, control, rate_limiter, plugins=plugins)
     executed_iter = iter(executed_results)
     results = [
         next(executed_iter) if executable_by_id[case.id] else skipped_by_id[case.id]
         for case in cases
     ]
-    run_id = save_run(root, results, project=project)
+    for case, result in zip(cases, results):
+        result.origin_case_id = case.origin_case_id or case.id
+        result.dataset_id = case.dataset_id
+        if control.reason() and result.status == "failed":
+            result.status = "cancelled"
+    run_id = save_run(root, results, project=project, metadata=metadata)
+    for result in results:
+        result.run_id = run_id
     run_case_ids = [item.case_id for item in results]
     save_execution_trend(root, project, run_id, results, run_scope=run_scope, case_ids=run_case_ids)
     update_known_issue_lifecycle(root, project, results)
     mark_suspect_lessons_after_run(root, project, results)
     prune_context_history(root, project)
+    from ai_apitest.domain.contracts import build_coverage_manifest
+    from ai_apitest.core.paths import project_coverage_manifest_file
+    from ai_apitest.core.serde import write_json
+    from ai_apitest.report.storage import current_run_results
+    source_cases = load_cases(root, project, max_bytes=max_input)
+    endpoints = [endpoint_from_dict(item) for item in read_json(project_docs_file(root, project), []) if isinstance(item, dict) and "method" in item and "path" in item]
+    write_json(project_coverage_manifest_file(root, project), build_coverage_manifest(endpoints, source_cases, config=config, latest_results=current_run_results(root, project, source_cases)))
+    return results
+
+
+def execute_runnable_cases(cases: list[TestCase], environment: dict, config: dict, control: RunControl, rate_limiter: RequestRateLimiter, *, plugins: PluginRegistry | None = None, on_result: Callable[[CaseResult], None] | None = None) -> list[CaseResult]:
+    plugins = plugins or PluginRegistry.from_config(config)
+    runtime = ExecutionRuntime(control=control, auth=AuthManager(environment), plugins=plugins, policy=ACTIVE_POLICY.get())
+    timeout = float(config.get("execution", {}).get("timeout_seconds", 20))
+    results = []
+    with httpx.Client(**client_options(environment, timeout)) as client, activate(runtime):
+        fixture_manager = FixtureManager(config, client, plugins=plugins)
+        environment_setup = {"context": initial_context()}
+        try:
+            environment_setup = run_environment_setup(environment, config, client, rate_limiter=rate_limiter)
+            if environment_setup.get("status") in {"failed", "skipped"}:
+                results = [environment_setup_failed_result(case, environment_setup) for case in cases]
+            else:
+                results = run_ordered_cases(cases, environment, config, client, environment_setup.get("context", {}), rate_limiter=rate_limiter, fixture_manager=fixture_manager, on_result=on_result)
+        finally:
+            with cleanup_control(float(config["execution"].get("cleanup_timeout_seconds", 10))):
+                environment_teardown = run_environment_teardown(environment, config, client, environment_setup.get("context", {}), rate_limiter=rate_limiter)
+        if environment_teardown:
+            for result in results:
+                result.cleanup = merge_lifecycle_result(result.cleanup, "environment_teardown", environment_teardown)
+                apply_lifecycle_failure(result, environment_teardown, config, "环境清理失败")
+    if on_result:
+        for result in results:
+            on_result(result)
     return results
 
 
@@ -324,50 +412,82 @@ def run_ordered_cases(
     *,
     rate_limiter: RequestRateLimiter | None = None,
     fixture_manager: FixtureManager | None = None,
+    on_result: Callable[[CaseResult], None] | None = None,
 ) -> list[CaseResult]:
     parallel = max(1, int(config.get("execution", {}).get("parallel", 1)))
-    indexed_results: dict[int, CaseResult] = {}
-    independent = [(index, case) for index, case in enumerate(cases) if not case.steps]
-    chain_cases = [(index, case) for index, case in enumerate(cases) if case.steps]
-    if parallel <= 1 or len(independent) <= 1:
-        for index, case in independent:
-            indexed_results[index] = run_case(
-                case,
-                environment,
-                config,
-                client,
-                base_context,
-                rate_limiter=rate_limiter,
-                fixture_manager=fixture_manager,
-            )
-    else:
-        with ThreadPoolExecutor(max_workers=parallel) as executor:
-            futures = {
-                executor.submit(
-                    run_case,
-                    case,
-                    environment,
-                    config,
-                    client,
-                    base_context,
-                    rate_limiter=rate_limiter,
-                    fixture_manager=fixture_manager,
-                ): index
-                for index, case in independent
-            }
-            for future in as_completed(futures):
-                indexed_results[futures[future]] = future.result()
-    for index, case in chain_cases:
-        indexed_results[index] = run_case(
-            case,
-            environment,
-            config,
-            client,
-            base_context,
-            rate_limiter=rate_limiter,
-            fixture_manager=fixture_manager,
-        )
-    return [indexed_results[index] for index in range(len(cases))]
+    runtime = ACTIVE_RUNTIME.get() or ExecutionRuntime(control=RunControl(), auth=AuthManager(environment), plugins=PluginRegistry.from_config(config), policy=ACTIVE_POLICY.get())
+    initial_cookies = httpx.Cookies(client.cookies)
+    resource_locks = {name: threading.Lock() for case in cases for name in case.resources}
+    resource_locks["__chains__"] = threading.Lock()
+
+    def execute_one(case: TestCase) -> CaseResult:
+        with activate(replace(runtime, case=case)), isolated_client(client, initial_cookies) as session:
+            acquired = []
+            names = set(case.resources) | ({"__chains__"} if case.steps and not case.parallel_safe else set())
+            try:
+                for name in sorted(names):
+                    while not resource_locks[name].acquire(timeout=0.1):
+                        runtime.control.check()
+                    acquired.append(resource_locks[name])
+                runtime.control.check()
+                context = {**copy.deepcopy(base_context or {}), **copy.deepcopy(case.variables)}
+                if config.get("execution", {}).get("namespace"):
+                    context["iatest_namespace"] = config["execution"]["namespace"]
+                seed = config.get("execution", {}).get("random_seed")
+                context["_iatest_builtin_context"] = seeded_variables(seed, case.id) if seed is not None else initial_context()
+                fixture = FixtureManager(config, session, plugins=runtime.plugins) if fixture_manager is not None or case.fixture_requirements else None
+                history = []
+                retries = max(0, int(config.get("execution", {}).get("failure_retries", 0))) if retry_is_safe(case) else 0
+                for attempt in range(retries + 1):
+                    runtime.control.check()
+                    session.cookies.clear()
+                    session.cookies.update(initial_cookies)
+                    result = run_case(case, environment, config, session, context, rate_limiter=rate_limiter, fixture_manager=fixture)
+                    if result.status != "failed" or attempt >= retries or runtime.control.reason() or result.cleanup.get("status") in {"failed", "skipped"}:
+                        break
+                    history.append(asdict(result))
+                result.origin_case_id = case.origin_case_id or case.id
+                result.dataset_id = case.dataset_id
+                result.flaky = bool(history and result.status == "passed")
+                result.attempt_history = history
+                if runtime.control.reason() and result.status == "failed":
+                    result.status = "cancelled"
+                return result
+            except RunCancelled as exc:
+                result = skipped_result(case)
+                result.status = "cancelled"
+                result.error = str(exc)
+                result.request = {"cancelled": True, "reason": str(exc)}
+                return result
+            except Exception as exc:
+                result = skipped_result(case)
+                result.status = "failed"
+                result.error = f"用例执行异常：{exc}"
+                result.request = {"blocked": True, "reason": result.error}
+                return result
+            finally:
+                for lock in reversed(acquired):
+                    lock.release()
+
+    def execute(case: TestCase) -> CaseResult:
+        result = execute_one(case)
+        if on_result:
+            on_result(result)
+        return result
+
+    if parallel == 1:
+        return [execute(case) for case in cases]
+    with ThreadPoolExecutor(max_workers=parallel) as executor:
+        futures = [executor.submit(execute, case) for case in cases]
+        return [future.result() for future in futures]
+
+
+def retry_is_safe(case: TestCase) -> bool:
+    if case.retry_safe:
+        return True
+    return not case.fixture_requirements and not case.setup_steps and not case.cleanup_steps and all(
+        step.method.upper() in {"GET", "HEAD", "OPTIONS"} for step in case.steps
+    ) and (bool(case.steps) or case.method.upper() in {"GET", "HEAD", "OPTIONS"})
 
 
 def run_case(
@@ -394,31 +514,22 @@ def run_case(
 
     fixture_context = fixture_case_context(case, base_context)
     fixture_setup, fixture_session = fixture_manager.prepare(case, fixture_context)
-    if fixture_setup.get("status") != "passed":
+    try:
+        if fixture_setup.get("status") != "passed":
+            result = fixture_setup_failed_result(case, fixture_setup)
+        else:
+            result = run_case_without_fixture(
+                case, environment, config, client,
+                {**(base_context or {}), **fixture_session.injected_values},
+                rate_limiter=rate_limiter,
+            )
+    finally:
         fixture_cleanup = fixture_manager.cleanup(fixture_session, fixture_context)
-        result = fixture_setup_failed_result(case, fixture_setup)
-        result.cleanup = merge_lifecycle_result(
-            result.cleanup,
-            "external_capability_cleanup",
-            fixture_cleanup,
-        )
-        apply_lifecycle_failure(result, fixture_cleanup, config, "外部测试能力清理失败")
-        return result
-
-    result = run_case_without_fixture(
-        case,
-        environment,
-        config,
-        client,
-        {**(base_context or {}), **fixture_session.injected_values},
-        rate_limiter=rate_limiter,
-    )
     result.setup = merge_lifecycle_result(
         result.setup,
         "external_capability_setup",
         fixture_setup,
     )
-    fixture_cleanup = fixture_manager.cleanup(fixture_session, fixture_context)
     result.cleanup = merge_lifecycle_result(
         result.cleanup,
         "external_capability_cleanup",
@@ -463,6 +574,7 @@ def run_case_without_fixture(
         parameter_serialization=case.parameter_serialization,
         body=case.body,
         assertions=case.assertions,
+        poll=case.poll,
     )
     step_result = execute_step(step, environment, config, context, client, rate_limiter=rate_limiter)
     populate_context_from_response(context, step_result["response"])
@@ -581,6 +693,8 @@ def run_environment_setup(
     rate_limiter: RequestRateLimiter | None = None,
 ) -> dict[str, Any]:
     context = initial_context()
+    if config.get("execution", {}).get("namespace"):
+        context["iatest_namespace"] = config["execution"]["namespace"]
     steps = environment_steps(environment, "setup_steps")
     result = run_setup_steps(
         steps,
@@ -666,17 +780,12 @@ def run_cleanup_steps(
 ) -> dict[str, Any]:
     if not steps:
         return {}
-    return run_lifecycle_steps(
-        steps,
-        environment,
-        config,
-        context,
-        client,
-        lifecycle=lifecycle,
-        stop_on_failure=False,
-        rate_limiter=rate_limiter,
-        missing_context_is_not_needed=missing_context_is_not_needed,
-    )
+    with cleanup_control(float(config.get("execution", {}).get("cleanup_timeout_seconds", 10))):
+        return run_lifecycle_steps(
+            steps, environment, config, context, client, lifecycle=lifecycle,
+            stop_on_failure=False, rate_limiter=rate_limiter,
+            missing_context_is_not_needed=missing_context_is_not_needed,
+        )
 
 
 def run_lifecycle_steps(
@@ -783,6 +892,49 @@ def populate_context_from_response(context: dict[str, Any], response: dict[str, 
 
 
 def execute_step(
+    step: TestStep, environment: dict[str, Any], config: dict[str, Any], context: dict[str, Any],
+    client: httpx.Client, *, rate_limiter: RequestRateLimiter | None = None,
+) -> dict[str, Any]:
+    if not step.poll:
+        return _execute_step_once(step, environment, config, context, client, rate_limiter=rate_limiter)
+    try:
+        timeout = float(step.poll.get("timeout_seconds", 10))
+        interval = float(step.poll.get("interval_seconds", 0.5))
+        max_attempts = int(step.poll.get("max_attempts", 1000))
+        if not math.isfinite(timeout) or not math.isfinite(interval) or timeout <= 0 or interval <= 0:
+            raise ValueError("轮询时限和间隔必须大于 0")
+        if not 1 <= max_attempts <= 10000:
+            raise ValueError("轮询次数上限必须在 1 到 10000 之间")
+        if step.method.upper() not in {"GET", "HEAD", "OPTIONS"} and not step.poll.get("allow_mutation", False):
+            raise ValueError("写请求轮询必须显式设置 poll.allow_mutation")
+    except (ValueError, TypeError, AttributeError) as exc:
+        return {"status": "failed", "elapsed_ms": 0, "error": str(exc), "assertion_errors": [], "request": {"method": step.method, "path": step.path, "blocked": True}, "response": {}}
+    started = time.monotonic()
+    parent = ACTIVE_RUNTIME.get()
+    remaining = max(0.001, parent.control.timeout_seconds - (time.monotonic() - parent.control.started)) if parent and parent.control.timeout_seconds is not None else None
+    poll_control = RunControl(timeout_seconds=min(timeout, remaining) if remaining is not None else timeout,
+                              cancelled=parent.control.cancelled if parent else threading.Event(),
+                              cancellation_check=parent.control.cancellation_check if parent else None)
+    runtime = replace(parent, control=poll_control) if parent else ExecutionRuntime(control=poll_control)
+    history = []
+    with activate(runtime):
+        while True:
+            result = _execute_step_once(step, environment, config, context, client, rate_limiter=rate_limiter)
+            history.append({"status_code": result["response"].get("status_code"), "assertion_errors": result["assertion_errors"], "error": result["error"]})
+            if result["status"] == "passed" or result["error"] or poll_control.reason() or len(history) >= max_attempts:
+                break
+            try:
+                poll_control.wait(interval)
+            except RunCancelled:
+                result["error"] = "轮询未在截止时间前满足断言" if not poll_control.cancelled.is_set() else "执行已取消"
+                break
+    result["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    result["request"]["poll_attempts"] = len(history)
+    result["response"]["poll_history"] = history
+    return result
+
+
+def _execute_step_once(
     step: TestStep,
     environment: dict[str, Any],
     config: dict[str, Any],
@@ -809,10 +961,17 @@ def execute_step(
     attempts = 0
     rate_limit_wait_seconds = 0.0
     rate_limit_events: list[dict[str, Any]] = []
+    auth_value = ""
+    auth_retried = False
     try:
+        check_control()
         base_url = str(environment["base_url"]).rstrip("/")
-        headers = render_template({**environment.get("headers", {}), **step.headers}, context)
+        overridden = {key.lower() for key in step.headers}
+        headers = render_template({**{key: value for key, value in environment.get("headers", {}).items() if key.lower() not in overridden}, **step.headers}, context)
         headers = {str(key): value for key, value in headers.items() if value is not None}
+        runtime = ACTIVE_RUNTIME.get()
+        if runtime and getattr(runtime.case, "identity", "") and "authorization" not in overridden:
+            headers = {key: value for key, value in headers.items() if key.lower() != "authorization"}
         path_params = render_template(step.path_params, context)
         query = render_template(step.query, context)
         body = render_template(step.body, context)
@@ -837,10 +996,26 @@ def execute_step(
         fallback_wait = max(0.0, float(execution.get("rate_limit_fallback_wait_seconds", 1)))
         max_rate_limit_wait = max(0.0, float(execution.get("max_rate_limit_wait_seconds", 120)))
         while True:
+            check_control()
             if rate_limiter is not None:
                 rate_limit_wait_seconds += rate_limiter.acquire(step.method, step.path)
             attempts += 1
-            with client.stream(step.method, url, headers=headers, **request_kwargs) as response:
+            runtime = ACTIVE_RUNTIME.get()
+            if runtime:
+                runtime.context = context
+            if runtime and runtime.auth and "authorization" not in overridden and "authorization" not in {key.lower() for key in headers}:
+                auth_value = runtime.auth.token(client, getattr(runtime.case, "identity", ""))
+                if auth_value:
+                    headers["Authorization"] = "Bearer " + auth_value
+            if runtime and runtime.plugins:
+                for hook in runtime.plugins.before_request:
+                    hook(step, headers, request_kwargs, context)
+            request_timeout = client.timeout
+            if runtime and (remaining := runtime.control.remaining()) is not None:
+                request_timeout = httpx.Timeout(min(float(config.get("execution", {}).get("timeout_seconds", 20)), remaining))
+            http_started = time.perf_counter()
+            check_url(url)
+            with client.stream(step.method, url, headers=headers, timeout=request_timeout, **request_kwargs) as response:
                 content, truncated = read_response_content(response, max_response_bytes)
                 response_snapshot = parse_response(
                     response.status_code,
@@ -849,6 +1024,16 @@ def execute_step(
                     truncated=truncated,
                     max_response_bytes=max_response_bytes,
                 )
+                response_snapshot["elapsed_ms"] = int((time.perf_counter() - http_started) * 1000)
+            check_control()
+            if runtime and runtime.plugins:
+                for hook in runtime.plugins.after_response:
+                    hook(step, response_snapshot, context)
+            if runtime and auth_value and not auth_retried and response_snapshot.get("status_code") == 401 and step.method.upper() in {"GET", "HEAD", "OPTIONS"} and not expected_http_status(response_snapshot, step.assertions):
+                auth_value = runtime.auth.token(client, getattr(runtime.case, "identity", ""), invalidate=True, stale_value=auth_value)
+                headers["Authorization"] = "Bearer " + auth_value
+                auth_retried = True
+                continue
             expected_status = expected_http_status(response_snapshot, step.assertions)
             if (
                 response_snapshot.get("status_code") == 429
@@ -886,15 +1071,14 @@ def execute_step(
     assertion_errors = []
     if not error:
         for assertion in step.assertions:
-            rendered_assertion = Assertion(
-                type=assertion.type,
-                target=assertion.target,
-                operator=assertion.operator,
-                expected=render_template(assertion.expected, context),
-            )
-            failure = evaluate(rendered_assertion, response_snapshot)
-            if failure:
-                assertion_errors.append(failure)
+            try:
+                rendered_assertion = Assertion(type=assertion.type, target=assertion.target,
+                    operator=assertion.operator, expected=render_template(assertion.expected, context))
+                failure = evaluate(rendered_assertion, response_snapshot)
+                if failure:
+                    assertion_errors.append(failure)
+            except Exception as exc:
+                assertion_errors.append(f"断言执行异常：{exc}")
     status = "passed" if not error and not assertion_errors else "failed"
     return {
         "status": status,
@@ -970,12 +1154,7 @@ def encode_request_body(headers: dict[str, Any], body: Any, *, max_bytes: int = 
     if body is None:
         return {}
     if isinstance(body, dict) and set(body) == {"$iatest_file"}:
-        path = Path(str(body["$iatest_file"])).expanduser()
-        if not path.is_file():
-            raise ValueError(f"请求体文件不存在或不是文件：{path}")
-        if path.stat().st_size > max_bytes:
-            raise ValueError(f"请求体文件超过 {max_bytes} 字节限制：{path.name}")
-        return {"content": path.read_bytes()}
+        return {"content": read_file(str(body["$iatest_file"]), max_bytes)}
     content_type = next(
         (str(value) for key, value in headers.items() if key.lower() == "content-type"),
         "application/json",
@@ -1012,13 +1191,9 @@ def multipart_fields(body: Any, *, max_bytes: int = 20_000_000) -> dict[str, Any
             )
         elif isinstance(value, dict) and value.get("file_path"):
             path = Path(str(value["file_path"])).expanduser()
-            if not path.is_file():
-                raise ValueError(f"Multipart 文件不存在或不是文件：{path}")
-            if path.stat().st_size > max_bytes:
-                raise ValueError(f"Multipart 文件超过 {max_bytes} 字节限制：{path.name}")
             result[str(key)] = (
                 str(value.get("filename") or path.name),
-                path.read_bytes(),
+                read_file(path, max_bytes),
                 str(value.get("content_type") or "application/octet-stream"),
             )
         else:
@@ -1042,6 +1217,7 @@ def read_response_content(response: httpx.Response, max_bytes: int) -> tuple[byt
     content = bytearray()
     truncated = False
     for chunk in response.iter_bytes():
+        check_control()
         remaining = max_bytes - len(content)
         if len(chunk) > remaining:
             content.extend(chunk[:remaining])
@@ -1180,6 +1356,7 @@ def initial_context(base: dict[str, Any] | None = None) -> dict[str, Any]:
         "timestamp": timestamp,
         "uuid": uuid.uuid4().hex,
         "random": uuid.uuid4().hex,
+        **(base or {}).get("_iatest_builtin_context", {}),
     }
 
 
@@ -1259,8 +1436,10 @@ def parse_response(
 ) -> dict[str, Any]:
     text = body.decode("utf-8", errors="replace")
     parsed_json = None
+    json_valid = False
     try:
         parsed_json = json.loads(text) if text else None
+        json_valid = bool(text)
     except json.JSONDecodeError:
         parsed_json = None
     return {
@@ -1268,6 +1447,7 @@ def parse_response(
         "headers": {key.lower(): value for key, value in dict(headers).items()},
         "text": text,
         "json": parsed_json,
+        "json_valid": json_valid,
         "truncated": truncated,
         "captured_bytes": len(body),
         "max_response_bytes": max_response_bytes,

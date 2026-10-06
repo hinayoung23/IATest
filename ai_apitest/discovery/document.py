@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 from ai_apitest.core.http import fetch_text_limited
+from ai_apitest.core.sandbox import SandboxPolicy, policy_scope, read_file
 from ai_apitest.core.models import Endpoint
 from ai_apitest.discovery.openapi import parse_document_text, parse_openapi
 
@@ -34,7 +35,22 @@ def load_source_text(source: str) -> str:
         raise ValueError(f"接口文档路径不存在：{path}")
     if path.stat().st_size > MAX_DOCUMENT_BYTES:
         raise ValueError(f"接口文档超过 {MAX_DOCUMENT_BYTES} 字节限制：{path}")
-    return path.read_text(encoding="utf-8")
+    return read_file(path, MAX_DOCUMENT_BYTES).decode("utf-8")
+
+
+def load_and_parse_source(root: Path, project: str, source: str, *, text: str | None = None, allow_source_file: bool = False, allow_source_url: bool = False) -> tuple[str, list[Endpoint], dict]:
+    from ai_apitest.core.config import load_config, resolve_env_vars
+    config = load_config(root)
+    base_url = config.get("environments", {}).get(config.get("default_environment", "local"), {}).get("base_url", "")
+    try:
+        base_url = resolve_env_vars(base_url)
+    except ValueError:
+        base_url = ""
+    policy = SandboxPolicy.from_config(root, config, project=project, base_url=str(base_url), source=source, allow_source_file=allow_source_file, allow_source_url=allow_source_url)
+    with policy_scope(policy):
+        text = load_source_text(source) if text is None else text
+        endpoints, metadata = parse_api_document(text, source=source)
+    return text, endpoints, metadata
 
 
 def ensure_document_size(content: bytes, source: str) -> None:
@@ -296,19 +312,9 @@ def markdown_section_facts(
     return result
 
 
-def global_rules_for_endpoint(
-    rules: list[dict[str, Any]],
-    method: str,
-    path: str,
-) -> list[dict[str, Any]]:
-    result: list[dict[str, Any]] = []
-    for rule in rules:
-        text = str(rule.get("source_evidence") or rule.get("description") or "")
-        if path == "/api/generate" and re.search(r"默认有效期|默认返回\s*`?600", text):
-            copied = copy.deepcopy(rule)
-            copied["expected_status"] = 200
-            result.append(copied)
-    return result
+def global_rules_for_endpoint(rules: list[dict[str, Any]], method: str, path: str) -> list[dict[str, Any]]:
+    from ai_apitest.adapters.tempbox import global_rules_for_endpoint as scoped_rules
+    return scoped_rules(rules, method, path)
 
 
 def add_markdown_response_example(
@@ -479,7 +485,7 @@ def query_parameters(names: list[str]) -> list[dict[str, Any]]:
 
 def sample_param_value(name: str) -> str:
     if name.lower() == "email":
-        return "test123@mail.tempbox.cn"
+        return "test@example.invalid"
     if name.lower() == "prefix":
         return "iatest"
     return "sample"

@@ -29,7 +29,7 @@ from ai_apitest.core.models import CaseResult, Endpoint, TestCase
 from ai_apitest.generator.cases import attach_cleanup_steps, attach_setup_steps, generate_cases
 
 
-GENERATION_PIPELINE_VERSION = "2026-08-11.1"
+GENERATION_PIPELINE_VERSION = "2026-10-06.1"
 
 
 DEFAULT_STRATEGY_DESCRIPTIONS = {
@@ -543,6 +543,11 @@ def generate_cases_with_config(
     )
     llm = llm_override or configured_llm(root, "case_generator")
     fingerprint = case_generation_fingerprint(root, project, endpoints, config, llm)
+    from ai_apitest.data.generation_cache import IncrementalGenerationCache
+    incremental_cache = IncrementalGenerationCache(root, project, endpoints, config, llm)
+    reused_cases, changed_endpoints = ([], endpoints)
+    if not force_refresh and bool(config.get("agents", {}).get("reuse_generation_cache", True)):
+        reused_cases, changed_endpoints = incremental_cache.load()
     if not force_refresh and bool(config.get("agents", {}).get("reuse_generation_cache", True)):
         cached = load_generation_cache(root, project, fingerprint, endpoints)
         if cached is not None:
@@ -589,13 +594,22 @@ def generate_cases_with_config(
             try:
                 cases, warning = _generate_cases_without_cache(
                     root,
-                    endpoints,
+                    changed_endpoints if reused_cases and not feedback else endpoints,
                     project=project,
                     stream_callback=stream_callback,
                     llm_override=llm_override,
                     quality_feedback=feedback,
                     quality_round=round_index,
                 )
+                if reused_cases and not feedback:
+                    from ai_apitest.core.case_schema import normalize_cases
+                    cases = normalize_cases([*reused_cases, *cases])
+                    seen = set()
+                    for case in cases:
+                        if case.scenario_id in seen:
+                            case.scenario_id += "-" + hashlib.sha256(f"{case.method}:{case.path}:{case.id}".encode()).hexdigest()[:12]
+                        seen.add(case.scenario_id)
+                    warning = f"复用 {len(reused_cases)} 条未受影响用例，仅重新生成 {len(changed_endpoints)} 个关联接口；" + warning
                 round_diagnostics = warning
                 if warning:
                     warnings.append(warning)
@@ -730,6 +744,8 @@ def generate_cases_with_config(
                 error=exc,
             )
         save_generation_cache(root, project, fingerprint, cases)
+        if not case_quality_gate_issues(cases, endpoints):
+            incremental_cache.save(cases)
     return cases, "；".join(dict.fromkeys(item for item in warnings if item))
 
 
@@ -1214,6 +1230,7 @@ def case_generation_fingerprint(
     endpoints: list[Endpoint],
     config: dict,
     llm: dict,
+    *, scoped: bool = False,
 ) -> str:
     from ai_apitest.application.quality_audit import unique_audit_models
     from ai_apitest.core.paths import project_metadata_file
@@ -1233,6 +1250,10 @@ def case_generation_fingerprint(
             ).fetchone()
             if row:
                 lesson_version = dict(row)
+            if scoped:
+                keys = {(endpoint.method.upper(), endpoint.path) for endpoint in endpoints}
+                lessons = conn.execute("select id, revision, updated_at, method, path from lessons where project = ? and lifecycle_status in ('active', 'reopened') and review_status = 'confirmed'", (safe_project_name(project),)).fetchall()
+                lesson_version = sorted([dict(row) for row in lessons if not row["method"] or not row["path"] or (str(row["method"]).upper(), row["path"]) in keys], key=lambda row: row["id"])
     except Exception:
         pass
     role_dir = Path(__file__).resolve().parents[1] / "agents" / "identities"
@@ -1243,6 +1264,9 @@ def case_generation_fingerprint(
     project_metadata = read_json(project_metadata_file(root, project), {})
     graph = project_metadata.get("dependency_graph", {})
     graph_edges = graph.get("edges", []) if isinstance(graph, dict) else []
+    if scoped:
+        keys = {(endpoint.method.upper(), endpoint.path) for endpoint in endpoints}
+        graph_edges = [edge for edge in graph_edges if isinstance(edge, dict) and any((str(edge.get(name, {}).get("method", "")).upper(), edge.get(name, {}).get("path", "")) in keys for name in ("from", "to"))]
     semantic_graph = {
         "edges": sorted(
             [item for item in graph_edges if isinstance(item, dict)],
@@ -1281,6 +1305,9 @@ def case_generation_fingerprint(
         "roles": role_versions,
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    if scoped:
+        payload["trusted_contract"] = {key: value for key, value in payload["trusted_contract"].items() if key in {"version", "status"}}
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urldefrag, urljoin, urlparse
 
 from ai_apitest.core.http import fetch_text_limited
+from ai_apitest.core.sandbox import read_file
 from ai_apitest.core.models import Endpoint
 
 
@@ -24,7 +26,7 @@ def load_openapi(source: str) -> dict[str, Any]:
         return parse_document_text(text, source=source)
     path = Path(source).expanduser()
     ensure_reference_size_from_path(path)
-    return parse_document_text(path.read_text(encoding="utf-8"), source=str(path))
+    return parse_document_text(read_file(path, MAX_REFERENCE_BYTES).decode("utf-8"), source=str(path))
 
 
 def parse_document_text(text: str, *, source: str = "") -> dict[str, Any]:
@@ -49,6 +51,7 @@ class ReferenceResolver:
     def __init__(self, document: dict[str, Any], source: str = "") -> None:
         self.root_source = normalize_source(source)
         self.documents: dict[str, dict[str, Any]] = {self.root_source: document}
+        self.recursive_definitions: dict[str, tuple[Any, dict, str, tuple[str, str]]] = {}
         self.local_root = Path(self.root_source).parent if self.root_source and not self.root_source.startswith(("http://", "https://")) else None
 
     def resolve(
@@ -73,13 +76,17 @@ class ReferenceResolver:
             return value
         reference = value.get("$ref")
         if isinstance(reference, str) and reference:
+            if reference.startswith("#/$defs/iatest_"):
+                return dict(value)
             target, target_document, target_source, reference_key = self.lookup(
                 reference,
                 current_document,
                 current_source,
             )
             if reference_key in stack:
-                return dict(value)
+                name = "iatest_" + hashlib.sha256(repr(reference_key).encode()).hexdigest()[:24]
+                self.recursive_definitions[name] = (target, target_document, target_source, reference_key)
+                return {**value, "$ref": f"#/$defs/{name}"}
             resolved = self.resolve(
                 target,
                 document=target_document,
@@ -104,6 +111,42 @@ class ReferenceResolver:
             key: self.resolve(item, document=current_document, source=current_source, stack=stack, depth=depth + 1)
             for key, item in value.items()
         }
+
+    def bind_schemas(self, value: Any) -> Any:
+        """Keep cyclic references local when extracting a schema from its document."""
+        if isinstance(value, list):
+            return [self.bind_schemas(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        output = {}
+        for key, item in value.items():
+            output[key] = self.bundle_schema(item) if key == "schema" else self.bind_schemas(item)
+        return output
+
+    def bundle_schema(self, schema: Any) -> Any:
+        if not isinstance(schema, dict):
+            return schema
+        definitions = dict(schema.get("$defs", {}))
+        def references(value):
+            if isinstance(value, dict):
+                ref = value.get("$ref", "")
+                if isinstance(ref, str) and ref.startswith("#/$defs/iatest_"):
+                    yield ref.split("/")[-1]
+                for child in value.values():
+                    yield from references(child)
+            elif isinstance(value, list):
+                for child in value:
+                    yield from references(child)
+        pending = list(references(schema))
+        while pending:
+            name = pending.pop()
+            if name in definitions:
+                continue
+            target, document, source, reference_key = self.recursive_definitions[name]
+            definition = self.resolve(target, document=document, source=source, stack=frozenset({reference_key}))
+            definitions[name] = definition
+            pending.extend(references(definition))
+        return {**schema, "$defs": definitions} if definitions else schema
 
     def lookup(
         self,
@@ -145,7 +188,7 @@ class ReferenceResolver:
             if not path.exists():
                 raise ValueError(f"OpenAPI 外部引用文件不存在：{path}")
             ensure_reference_size_from_path(path)
-            document = parse_document_text(path.read_text(encoding="utf-8"), source=str(path))
+            document = parse_document_text(read_file(path, MAX_REFERENCE_BYTES).decode("utf-8"), source=str(path))
         self.documents[source] = document
         return document
 
@@ -185,9 +228,9 @@ def parse_openapi(document: dict[str, Any], *, source: str = "") -> list[Endpoin
                     path=str(path),
                     summary=str(operation.get("summary") or ""),
                     description=str(operation.get("description") or ""),
-                    parameters=parameters,
-                    request_body=request_body if isinstance(request_body, dict) else None,
-                    responses=responses if isinstance(responses, dict) else {},
+                    parameters=resolver.bind_schemas(parameters),
+                    request_body=resolver.bind_schemas(request_body) if isinstance(request_body, dict) else None,
+                    responses=resolver.bind_schemas(responses) if isinstance(responses, dict) else {},
                     tags=[str(tag) for tag in operation.get("tags", []) if str(tag)],
                     operation_id=str(operation.get("operationId") or ""),
                     deprecated=bool(operation.get("deprecated", False)),

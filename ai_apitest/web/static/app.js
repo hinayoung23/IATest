@@ -132,6 +132,12 @@
       }
       if (title) title.textContent = task.label || tr('panel.background');
       var active = task.status === 'queued' || task.status === 'running';
+      var cancel = panel.querySelector('[data-task-cancel]');
+      if (cancel) {
+        cancel.hidden = !active;
+        cancel.querySelector('[name="task_id"]').value = task.id;
+        cancel.querySelector('button').disabled = !!task.cancel_requested;
+      }
       if (status) status.textContent = task.status === 'queued' ? tr('status.queued') : (task.status === 'running' ? tr('status.running') : (task.status === 'completed' ? tr('status.completed') : tr('status.failed')));
       if (detail) detail.textContent = detailText;
       if (hint) hint.textContent = active ? (task.status === 'queued' ? tr('hint.queued') : (task.action === 'run' ? tr('hint.run') : tr('hint.model'))) : tr('hint.done');
@@ -148,10 +154,11 @@
       }
       panel.dataset.taskId = task.id;
       panel.dataset.taskStatus = task.status;
+      if (status && task.status === 'cancelled') status.textContent = tr('status.cancelled');
       panel.hidden = false;
     }
     function maybeReloadForTask(task) {
-      if (task.status !== 'completed') return;
+      if (task.status !== 'completed' && task.status !== 'cancelled') return;
       var relevant = (task.action === 'discover' && window.location.pathname === '/interfaces') || ((task.action === 'generate' || task.action === 'run') && window.location.pathname === '/cases');
       if (!relevant) return;
       var key = 'iatest-task-reloaded-' + task.id;
@@ -426,7 +433,7 @@
         'running.discover': 'Discovering APIs', 'running.task': 'Task in progress', 'detail.run': 'Test cases are running. Please wait.',
         'detail.model': 'The model is generating content. This may take a while.',
         'detail.no_stream': ' (waited {seconds}s; no model output received yet)', 'panel.background': 'Background task',
-        'status.queued': 'Waiting', 'status.running': 'Running', 'status.completed': 'Completed', 'status.failed': 'Failed',
+        'status.queued': 'Waiting', 'status.running': 'Running', 'status.completed': 'Completed', 'status.failed': 'Failed', 'status.cancelled': 'Cancelled',
         'hint.queued': 'The task is in the persistent queue and will continue after service recovery. Another task of the same type cannot start yet.',
         'hint.run': 'Cases are running. You may close this notice; another run cannot start until this one finishes.',
         'hint.model': 'The model is generating content. This may take a while. You may close this notice; another task of the same type cannot start yet.',
@@ -436,6 +443,7 @@
         'bulk.content': 'items', 'bulk.confirm': 'Delete the selected {count} {label}? This cannot be undone.'
       },
       zh: {
+        'status.cancelled': '已取消',
         'stage.queued': '排队启动', 'stage.read_document': '读取文档', 'stage.parse_document': '解析文档',
         'stage.llm_discovery': '大模型识别', 'stage.audit': '质量审计', 'stage.save_results': '保存结果',
         'stage.complete': '完成', 'stage.read_endpoints': '读取接口', 'stage.prepare': '准备策略',
@@ -455,6 +463,7 @@
         'bulk.content': '内容', 'bulk.confirm': '确认删除已选择的 {count} 条{label}？此操作不可撤销。'
       },
       ja: {
+        'status.cancelled': 'キャンセル済み',
         'stage.queued': '開始待ち', 'stage.read_document': 'ドキュメント読込', 'stage.parse_document': 'ドキュメント解析',
         'stage.llm_discovery': 'モデルによる検出', 'stage.audit': '品質レビュー', 'stage.save_results': '結果を保存',
         'stage.complete': '完了', 'stage.read_endpoints': 'エンドポイント読込', 'stage.prepare': '戦略を準備',
@@ -474,6 +483,7 @@
         'bulk.content': '項目', 'bulk.confirm': '選択した{count}件の{label}を削除しますか？この操作は取り消せません。'
       },
       fr: {
+        'status.cancelled': 'Annulé',
         'stage.queued': 'En attente', 'stage.read_document': 'Lecture du document', 'stage.parse_document': 'Analyse du document',
         'stage.llm_discovery': 'Découverte par le modèle', 'stage.audit': 'Revue qualité', 'stage.save_results': 'Enregistrement des résultats',
         'stage.complete': 'Terminé', 'stage.read_endpoints': 'Lecture des points de terminaison', 'stage.prepare': 'Préparation de la stratégie',
@@ -493,6 +503,7 @@
         'bulk.content': 'éléments', 'bulk.confirm': 'Supprimer les {count} {label} sélectionnés ? Cette action est irréversible.'
       },
       ru: {
+        'status.cancelled': 'Отменено',
         'stage.queued': 'В очереди', 'stage.read_document': 'Чтение документа', 'stage.parse_document': 'Разбор документа',
         'stage.llm_discovery': 'Обнаружение моделью', 'stage.audit': 'Проверка качества', 'stage.save_results': 'Сохранение результатов',
         'stage.complete': 'Готово', 'stage.read_endpoints': 'Чтение конечных точек', 'stage.prepare': 'Подготовка стратегии',

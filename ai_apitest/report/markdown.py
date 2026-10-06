@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ai_apitest.core.models import CaseResult
 from ai_apitest.core.artifact_language import (
@@ -17,9 +17,9 @@ from ai_apitest.core.artifact_language import (
 )
 from ai_apitest.core.config import load_config
 from ai_apitest.core.files import atomic_write_text
+from ai_apitest.core.redaction import redact, redact_text, redact_url as sanitize_url, sensitive_key
 from ai_apitest.core.paths import project_reports_dir, safe_project_name
 
-SENSITIVE_KEYS = ("authorization", "token", "api_key", "apikey", "secret", "password", "cookie")
 MAX_SNAPSHOT_CHARS = 12000
 REPORT_FILENAME_PATTERN = re.compile(r"report-\d{8}-\d{6}(?:-\d{6})?\.md")
 
@@ -55,6 +55,7 @@ def write_report(
             ai_review=ai_review,
             now=now,
             artifact_language=language,
+            metadata=report_metadata(root, project, results),
         ),
     )
     prune_reports(root, project)
@@ -69,6 +70,7 @@ def render_report_markdown(
     ai_review: str = "",
     now: datetime | None = None,
     artifact_language: str | None = None,
+    metadata: dict | None = None,
 ) -> str:
     """Pure report renderer used by both quality audit and final persistence."""
     now = now or datetime.now()
@@ -76,6 +78,9 @@ def render_report_markdown(
         artifact_language or current_artifact_language()
     )
     t = lambda key: artifact_text(key, language)
+    from ai_apitest.report.export import execution_metrics
+    metrics = execution_metrics(results)
+    pass_rate = f"{metrics['execution_pass_rate'] * 100:.1f}%" if metrics["execution_pass_rate"] is not None else "-"
     passed = sum(1 for item in results if item.status == "passed")
     failed = sum(1 for item in results if item.status == "failed")
     skipped = sum(1 for item in results if item.status == "skipped")
@@ -90,10 +95,14 @@ def render_report_markdown(
         "",
         f"| {t('metric')} | {t('value')} |",
         "|------|-----|",
-        f"| {t('executed_cases')} | {total} |",
+        f"| {t('total_cases')} | {total} |",
+        f"| {t('executed_cases')} | {metrics['executed']} |",
         f"| {t('passed')} | {passed} |",
         f"| {t('failed')} | {failed} |",
         f"| {t('skipped')} | {skipped} |",
+        f"| {t('cancelled')} | {metrics['cancelled']} |",
+        f"| {t('flaky')} | {metrics['flaky']} |",
+        f"| {t('execution_pass_rate')} | {pass_rate} |",
         f"| {t('setup_failed')} | {setup_failed} |",
         f"| {t('cleanup_failed')} | {cleanup_failed} |",
         f"| {t('cleanup_skipped')} | {cleanup_skipped} |",
@@ -108,6 +117,11 @@ def render_report_markdown(
             f"| {result.case_id} {result.title} | {result.method} {result.path} | "
             f"{result.status} | {result.status_code or '-'} | {result.elapsed_ms}ms |"
         )
+    if metadata:
+        lines.extend(["", f"## {t('run_metadata')}", "", "```json", json.dumps(normalize_snapshot(metadata), ensure_ascii=False, indent=2), "```"])
+    for result in results:
+        if result.attempt_history:
+            lines.extend(["", f"### {result.case_id} {t('retry_evidence')}", "", "```json", format_snapshot(normalize_snapshot(result.attempt_history)), "```"])
     failures = [item for item in results if item.status == "failed"]
     if failures:
         lines.extend(["", f"## {t('failure_details')}", ""])
@@ -143,7 +157,15 @@ def render_report_markdown(
         lines.extend(["", f"## {t('ai_failure_review')}", "", f"> {t('ai_review_note')}", "", ai_review.strip(), ""])
     if analysis:
         lines.extend(["", f"## {t('ai_test_analysis')}", "", analysis.strip(), ""])
-    return "\n".join(lines)
+    return redact({"evidence": [asdict(item) for item in results], "markdown": "\n".join(lines)}, "***")["markdown"]
+
+
+def report_metadata(root: Path, project: str, results: list[CaseResult]) -> dict:
+    if not results or results[0].run_id is None:
+        return {}
+    from ai_apitest.report.storage import latest_run_metadata
+    metadata = latest_run_metadata(root, project)
+    return metadata if metadata.get("run_id") == results[0].run_id else {}
 
 
 def prune_reports(root: Path, project: str) -> None:
@@ -238,22 +260,7 @@ def lifecycle_contains_status(value: Any, status: str) -> bool:
 
 
 def normalize_snapshot(value: Any) -> Any:
-    if isinstance(value, dict):
-        normalized = {}
-        for key, item in value.items():
-            key_text = str(key)
-            if is_sensitive_key(key_text):
-                normalized[key] = "***"
-            elif key_text == "url" and isinstance(item, str):
-                normalized[key] = redact_url(item)
-            elif key_text == "headers" and isinstance(item, dict):
-                normalized[key] = redact_headers(item)
-            else:
-                normalized[key] = normalize_snapshot(item)
-        return normalized
-    if isinstance(value, list):
-        return [normalize_snapshot(item) for item in value]
-    return value
+    return redact(value, "***")
 
 
 def redact_headers(headers: dict[str, Any]) -> dict[str, Any]:
@@ -261,26 +268,11 @@ def redact_headers(headers: dict[str, Any]) -> dict[str, Any]:
 
 
 def redact_url(url: str) -> str:
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return url
-    query = []
-    changed = False
-    for key, value in parse_qsl(parts.query, keep_blank_values=True):
-        if is_sensitive_key(key):
-            query.append((key, "***"))
-            changed = True
-        else:
-            query.append((key, value))
-    if not changed:
-        return url
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    return sanitize_url(url, "***")
 
 
 def is_sensitive_key(key: str) -> bool:
-    lowered = key.lower().replace("-", "_")
-    return any(item in lowered for item in SENSITIVE_KEYS)
+    return sensitive_key(key)
 
 
 def format_snapshot(value: Any) -> str:

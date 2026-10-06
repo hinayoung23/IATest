@@ -6,6 +6,10 @@ AI 驱动的接口自动化测试框架，用于识别接口、生成用例、�
 
 [English](#english) | [中文](#中文)
 
+[Release 1.0.4 / 1.0.4 发布说明](docs/releases/1.0.4.md)
+
+[CI execution, datasets, authentication, polling and plugins / 框架补充与使用说明](docs/framework-improvements.md)
+
 ---
 
 ## English
@@ -559,6 +563,8 @@ iatest context import <file.jsonl> --project <name>
 ```
 
 使用 `iatest <command> --help` 查看完整参数。
+
+执行默认启用文件和网络访问策略；可用 `iatest run --isolation process` 启用独立进程和强制超时。Web 同样支持选择执行隔离；容器模式、访问白名单和插件配置见 [执行隔离说明](docs/sandbox.md)。
 
 ### 项目产物位置
 

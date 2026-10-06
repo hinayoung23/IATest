@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 from ai_apitest.core.case_schema import normalize_design_method, normalize_priority, normalize_test_case
 from ai_apitest.core.models import Assertion, Endpoint, TestCase, TestStep
+from ai_apitest.core.schema import check_schema
 from ai_apitest.domain.scenario_titles import concise_case_intent, ensure_dependency_chain_title
 from ai_apitest.core.serde import assertion_from_dict, to_jsonable
 from ai_apitest.domain.contracts import (
@@ -38,7 +39,7 @@ NEGATIVE_DESIGN_METHODS = {
     "auth_error",
 }
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-ALLOWED_ASSERTION_TYPES = {"status_code", "json_path", "header", "body_contains"}
+ALLOWED_ASSERTION_TYPES = {"status_code", "json_path", "header", "body_contains", "json_schema", "response_time", "custom"}
 ALLOWED_ASSERTION_OPERATORS = {
     "eq", "equals", "equal", "==", "ne", "not_equals", "!=", "in",
     "gt", "gte", "lt", "lte", "contains", "not_empty", "exists", "not_exists",
@@ -506,6 +507,7 @@ def compile_chain_draft(
             body=copy.deepcopy(raw["body"]) if "body" in raw else default_body(endpoint),
             assertions=assertions,
             extract={str(key): str(value) for key, value in dict(raw.get("extract") or {}).items()},
+            poll=copy.deepcopy(raw.get("poll") or {}),
         )
         steps.append(step)
     if issues:
@@ -665,6 +667,11 @@ def validate_assertion_list(
     issues: list[DraftIssue] = []
     documented = set(documented_status_codes(endpoint))
     for item in assertions:
+        if item.type == "json_schema":
+            try:
+                check_schema(item.expected)
+            except Exception as exc:
+                issues.append(DraftIssue("invalid_assertion_schema", f"Schema 无效：{exc}", draft.scenario_id, field_name))
         if item.type not in ALLOWED_ASSERTION_TYPES:
             issues.append(
                 DraftIssue(
@@ -1488,6 +1495,11 @@ def validate_final_assertions(
             )
         )
     for item in assertions:
+        if item.type == "json_schema":
+            try:
+                check_schema(item.expected)
+            except Exception as exc:
+                issues.append(DraftIssue("invalid_assertion_schema", f"Schema 无效：{exc}", scenario_id, field_name))
         if item.type not in ALLOWED_ASSERTION_TYPES:
             issues.append(DraftIssue("invalid_assertion_type", f"不支持的断言类型：{item.type}", scenario_id, field_name))
         if item.operator not in ALLOWED_ASSERTION_OPERATORS:
@@ -1635,7 +1647,10 @@ def has_unnegated_success_claim(text: str) -> bool:
 
 
 def case_execution_signature(case: TestCase) -> str:
+    from ai_apitest.core.models import execution_case_options
     payload = {
+        **execution_case_options(case),
+        "parameter_serialization": case.parameter_serialization,
         "method": case.method.upper(),
         "path": case.path,
         "headers": case.headers,
@@ -1663,7 +1678,10 @@ def case_request_signature(case: TestCase) -> str:
     Two cases that send the same request under the same fixture state can merge
     compatible assertions and rule lineage instead of executing twice.
     """
+    from ai_apitest.core.models import execution_case_options
     payload = {
+        **execution_case_options(case),
+        "parameter_serialization": case.parameter_serialization,
         "method": case.method.upper(),
         "path": case.path,
         "headers": case.headers,
@@ -1695,6 +1713,7 @@ def case_request_signature(case: TestCase) -> str:
 def step_execution_payload(step: TestStep) -> dict[str, Any]:
     # name 仅用于展示，不改变实际 HTTP 调用语义，不能阻碍等价链路去重。
     return {
+        "poll": step.poll,
         "method": step.method.upper(),
         "path": step.path,
         "headers": step.headers,
@@ -1712,7 +1731,9 @@ def validate_case_variables(
     endpoint: Endpoint,
     endpoint_by_key: dict[tuple[str, str], Endpoint],
 ) -> list[DraftIssue]:
-    available = set(BUILTIN_TEMPLATE_VARIABLES)
+    available = set(BUILTIN_TEMPLATE_VARIABLES) | set(case.variables)
+    if case.dataset is not None:
+        available.update(template_variables([case.headers, case.path_params, case.query, case.body]))
     for step in case.setup_steps:
         available.update(step.extract)
     required = template_variables([case.headers, case.path_params, case.query, case.body])
@@ -1731,7 +1752,9 @@ def validate_step_variables(
     case: TestCase,
     endpoint_by_key: dict[tuple[str, str], Endpoint],
 ) -> list[DraftIssue]:
-    available = set(BUILTIN_TEMPLATE_VARIABLES)
+    available = set(BUILTIN_TEMPLATE_VARIABLES) | set(case.variables)
+    if case.dataset is not None:
+        available.update(template_variables([step.headers, step.path_params, step.query, step.body] for step in case.steps))
     issues: list[DraftIssue] = []
     transferred_variables: set[str] = set()
     for index, step in enumerate(case.steps, start=1):
@@ -2151,7 +2174,7 @@ def normalize_draft_assertion(raw: dict[str, Any]) -> dict[str, Any]:
     if assertion_type == "response_present":
         return {"type": "json_path", "target": "$", "operator": "exists", "expected": True}
     if assertion_type == "json_schema":
-        return {"type": "json_path", "target": "$", "operator": "is_object", "expected": True}
+        return {"type": "json_schema", "target": "$", "operator": "eq", "expected": item.get("schema", item.get("expected"))}
     if assertion_type == "field_exists":
         return {
             "type": "json_path",

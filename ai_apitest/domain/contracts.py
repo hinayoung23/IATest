@@ -308,7 +308,7 @@ def normalize_business_rules(
             )
         )
         expected = normalize_expected(raw, semantic_text)
-        trigger = normalize_trigger(raw, semantic_text)
+        trigger = normalize_trigger(raw, semantic_text, method=method, path=path)
         # Fixture requirements are derived from the source-backed rule text,
         # never trusted verbatim from a model draft. This prevents a model from
         # making an otherwise runnable scenario non-runnable by inventing an
@@ -517,7 +517,7 @@ def infer_expected_status(text: str) -> int | None:
     return None
 
 
-def normalize_trigger(raw: dict[str, Any], semantic_text: str) -> dict[str, Any]:
+def normalize_trigger(raw: dict[str, Any], semantic_text: str, *, method: str = "", path: str = "") -> dict[str, Any]:
     candidate = raw.get("trigger")
     source_trigger = copy.deepcopy(candidate) if isinstance(candidate, dict) else {}
     overrides = (
@@ -537,7 +537,7 @@ def normalize_trigger(raw: dict[str, Any], semantic_text: str) -> dict[str, Any]
         inferred_overrides, inferred_omissions = infer_request_trigger(semantic_text)
         trigger["request_overrides"] = inferred_overrides
         trigger["omit_fields"] = inferred_omissions
-    documented_chain = infer_documented_postcondition_chain(semantic_text)
+    documented_chain = infer_documented_postcondition_chain(semantic_text, method=method, path=path)
     if documented_chain:
         # 这些链路是框架根据已识别 source_condition 编译出的可执行契约。
         # 不保留模型早期提交的弱化版本，否则升级后的必要断言无法进入正式产物。
@@ -565,128 +565,9 @@ def normalize_missing_resource_trigger(
     return result
 
 
-def infer_documented_postcondition_chain(text: str) -> list[dict[str, Any]]:
-    if re.search(r"删除成功后.+不能再查询邮件.+续期", text):
-        return [
-            {
-                "name": "生成真实临时邮箱",
-                "method": "GET",
-                "path": "/api/generate",
-                "extract": {"email": "$.email"},
-            },
-            {
-                "name": "删除刚生成的临时邮箱",
-                "method": "DELETE",
-                "path": "/api/delete/{email}",
-                "path_params": {"email": "{{email}}"},
-                "assertions": [
-                    {"type": "status_code", "target": "", "operator": "eq", "expected": 200},
-                    {"type": "json_path", "target": "$.status", "operator": "eq", "expected": "ok"},
-                    {
-                        "type": "json_path",
-                        "target": "$.message",
-                        "operator": "eq",
-                        "expected": "Mailbox deleted",
-                    },
-                ],
-            },
-            {
-                "name": "验证删除后无法再查询邮件",
-                "method": "GET",
-                "path": "/api/messages/{email}",
-                "path_params": {"email": "{{email}}"},
-                "assertions": [
-                    {"type": "status_code", "target": "", "operator": "eq", "expected": 200},
-                    {"type": "json_path", "target": "$", "operator": "is_array", "expected": True},
-                    {"type": "json_path", "target": "$", "operator": "length_eq", "expected": 0},
-                ],
-            },
-            {
-                "name": "验证删除后无法续期",
-                "method": "POST",
-                "path": "/api/extend/{email}",
-                "path_params": {"email": "{{email}}"},
-                "assertions": [
-                    {"type": "status_code", "target": "", "operator": "eq", "expected": 404},
-                    {
-                        "type": "json_path",
-                        "target": "$.detail",
-                        "operator": "eq",
-                        "expected": "Mailbox not found or expired",
-                    },
-                ],
-            },
-        ]
-    if re.search(r"同一个.+前缀.+已经存在.+刷新.+创建时间", text):
-        prefix = "refresh-{{random}}"
-        return [
-            {
-                "name": "先创建同前缀邮箱",
-                "method": "GET",
-                "path": "/api/generate",
-                "query": {"prefix": prefix},
-                "extract": {"email": "$.email", "first_created_at": "$.created_at"},
-            },
-            {
-                "name": "再次生成同前缀邮箱并验证刷新",
-                "method": "GET",
-                "path": "/api/generate",
-                "query": {"prefix": prefix},
-                "assertions": [
-                    {"type": "status_code", "target": "", "operator": "eq", "expected": 200},
-                    {
-                        "type": "json_path",
-                        "target": "$.email",
-                        "operator": "eq",
-                        "expected": "{{email}}",
-                    },
-                    {
-                        "type": "json_path",
-                        "target": "$.created_at",
-                        "operator": "gte",
-                        "expected": "{{first_created_at}}",
-                    },
-                    {"type": "json_path", "target": "$.expires_in", "operator": "eq", "expected": 600},
-                ],
-            },
-        ]
-    if re.search(r"续期成功后.+(?:创建|刷新)时间更新为当前时间.+新的剩余有效期", text):
-        return [
-            {
-                "name": "生成真实临时邮箱",
-                "method": "GET",
-                "path": "/api/generate",
-                "extract": {"email": "$.email"},
-            },
-            {
-                "name": "续期刚生成的临时邮箱",
-                "method": "POST",
-                "path": "/api/extend/{email}",
-                "path_params": {"email": "{{email}}"},
-                "assertions": [
-                    {"type": "status_code", "target": "", "operator": "eq", "expected": 200},
-                    {"type": "json_path", "target": "$.status", "operator": "eq", "expected": "ok"},
-                    {"type": "json_path", "target": "$.expires_in", "operator": "eq", "expected": 600},
-                ],
-            },
-            {
-                "name": "验证续期后邮箱恢复有效",
-                "method": "GET",
-                "path": "/api/check/{email}",
-                "path_params": {"email": "{{email}}"},
-                "assertions": [
-                    {"type": "status_code", "target": "", "operator": "eq", "expected": 200},
-                    {"type": "json_path", "target": "$.valid", "operator": "eq", "expected": True},
-                    {
-                        "type": "json_path",
-                        "target": "$.expires_in",
-                        "operator": "is_positive_integer",
-                        "expected": True,
-                    },
-                ],
-            },
-        ]
-    return []
+def infer_documented_postcondition_chain(text: str, *, method: str = "", path: str = "") -> list[dict[str, Any]]:
+    from ai_apitest.adapters.tempbox import infer_documented_postcondition_chain as infer_chain
+    return infer_chain(text, method=method, path=path)
 
 
 def enrich_business_rule_contracts(
@@ -1727,7 +1608,11 @@ def business_rule_inventory(endpoints: Iterable[Endpoint], *, testable_only: boo
     return result
 
 
-def build_coverage_manifest(endpoints: list[Endpoint], cases: list[TestCase]) -> dict[str, Any]:
+def build_coverage_manifest(endpoints: list[Endpoint], cases: list[TestCase], *, config: dict | None = None, latest_results: dict | None = None) -> dict[str, Any]:
+    if config is not None:
+        from dataclasses import replace
+        from ai_apitest.execution.fixtures import case_is_executable
+        cases = [replace(case, runnable=case_is_executable(case, config)) for case in cases]
     inventory = business_rule_inventory(endpoints, testable_only=True)
     cases_by_rule: dict[str, list[TestCase]] = {}
     cases_by_partition: dict[str, list[TestCase]] = {}
@@ -1815,6 +1700,16 @@ def build_coverage_manifest(endpoints: list[Endpoint], cases: list[TestCase]) ->
     covered_partitions = sum(
         item["disposition"] != "missing" for item in partition_rows
     )
+    latest_results = latest_results or {}
+    for row in [*rows, *partition_rows]:
+        statuses = [latest_results.get(case_id, {}).get("status") for case_id in row["case_ids"]]
+        row["executed"] = any(status in {"passed", "failed"} for status in statuses)
+        row["passed"] = any(status == "passed" for status in statuses)
+    for row in rows:
+        partitions = [item for item in partition_rows if item["rule_id"] == row["rule_id"]]
+        if partitions:
+            row["executed"] = all(item["executed"] for item in partitions)
+            row["passed"] = all(item["passed"] for item in partitions)
     return {
         "version": "2",
         "contract_version": TRUSTED_CONTRACT_VERSION,
@@ -1825,6 +1720,10 @@ def build_coverage_manifest(endpoints: list[Endpoint], cases: list[TestCase]) ->
             "covered_rule_count": covered,
             "missing_rule_count": len(rows) - covered,
             "executable_rule_count": executable,
+            "executable_coverage_percent": round(executable * 100 / len(rows), 2) if rows else None,
+            "executed_rule_count": sum(row["executed"] for row in rows),
+            "passed_rule_count": sum(row["passed"] for row in rows),
+            "executed_coverage_percent": round(sum(row["executed"] for row in rows) * 100 / len(rows), 2) if rows else None,
             "fixture_required_rule_count": fixture_required,
             "coverage_percent": round(covered * 100 / len(rows), 2) if rows else 100.0,
             "coverage_partition_count": len(partition_rows),

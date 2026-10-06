@@ -3376,7 +3376,7 @@ def test_chain_compiler_adds_response_contract_assertions_and_negative_semantics
     assert case.negative is True
     assert "negative" in case.tags
     assert any(
-        item.target == "$.email" and item.operator == "is_string"
+        item.type == "json_schema" and item.expected["properties"]["email"]["type"] == "string"
         for item in case.steps[0].assertions
     )
 
@@ -4729,6 +4729,7 @@ def test_standard_coverage_compiles_locally_without_designer_model_call(tmp_path
     assert len(cases) == 1
     assert [(item.target, item.operator, item.expected) for item in cases[0].assertions] == [
         ("", "eq", 200),
+        ("$", "eq", {"type": "object", "properties": {"status": {"type": "string", "const": "ok"}}}),
         ("$.status", "eq", "ok"),
     ]
     assert "本地确定性编译 1 个场景" in warning

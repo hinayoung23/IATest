@@ -22,6 +22,12 @@ _LANGUAGE_NAMES = {
 }
 
 _TEXT: dict[str, dict[str, str]] = {
+    "run_metadata": {"en": "Run metadata", "zh": "运行版本信息", "ja": "実行メタデータ", "fr": "Métadonnées d’exécution", "ru": "Метаданные запуска"},
+    "retry_evidence": {"en": "Evidence before retry", "zh": "重试前失败证据", "ja": "再試行前の証拠", "fr": "Preuves avant relance", "ru": "Данные до повтора"},
+    "total_cases": {"en": "Total cases", "zh": "用例总数", "ja": "ケース総数", "fr": "Total des cas", "ru": "Всего сценариев"},
+    "cancelled": {"en": "Cancelled", "zh": "已取消", "ja": "キャンセル済み", "fr": "Annulés", "ru": "Отменено"},
+    "flaky": {"en": "Passed after retry", "zh": "重试后通过", "ja": "再試行後成功", "fr": "Réussis après relance", "ru": "Успешно после повтора"},
+    "execution_pass_rate": {"en": "Pass rate of executed cases", "zh": "实际执行通过率", "ja": "実行ケース成功率", "fr": "Taux de réussite des cas exécutés", "ru": "Успешность выполненных сценариев"},
     "test_case_collection": {"en": "API Test Case Collection", "zh": "接口测试用例集", "ja": "API テストケース集", "fr": "Collection de cas de test API", "ru": "Набор тестовых сценариев API"},
     "case_source_note": {"en": "This file is the source of truth for project test cases. The Web console reads and saves this file directly.", "zh": "这个文件是该项目的用例源文件。浏览器页面会直接读取和保存本文件。", "ja": "このファイルはプロジェクトのテストケースの正本です。Web コンソールが直接読み書きします。", "fr": "Ce fichier est la source de référence des cas de test du projet. La console Web le lit et l’enregistre directement.", "ru": "Этот файл — источник тестовых сценариев проекта. Веб-консоль читает и сохраняет его напрямую."},
     "structured_case_data": {"en": "Structured case data", "zh": "结构化用例数据", "ja": "構造化ケースデータ", "fr": "Données structurées des cas", "ru": "Структурированные данные сценариев"},

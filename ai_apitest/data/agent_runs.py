@@ -13,6 +13,7 @@ from typing import Any, Iterator
 
 from ai_apitest.ai.provider import ModelResponse, TokenUsage
 from ai_apitest.core.paths import project_agent_db, safe_project_name
+from ai_apitest.core.redaction import redact, sensitive_key, redact_text
 
 
 SCHEMA = """
@@ -461,39 +462,8 @@ def digest(value: str) -> str:
     return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-SENSITIVE_KEY_PARTS = ("authorization", "api_key", "apikey", "access_token", "refresh_token", "secret", "password", "cookie")
-
-
 def redact_sensitive(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            str(key): "[REDACTED]" if sensitive_key(str(key)) else redact_sensitive(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [redact_sensitive(item) for item in value]
-    if isinstance(value, tuple):
-        return [redact_sensitive(item) for item in value]
-    if isinstance(value, str):
-        return redact_text(value)
-    return value
-
-
-def sensitive_key(key: str) -> bool:
-    normalized = key.strip().lower().replace("-", "_")
-    return any(part in normalized for part in SENSITIVE_KEY_PARTS)
-
-
-def redact_text(value: str) -> str:
-    text = str(value or "")
-    text = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [REDACTED]", text)
-    text = re.sub(r"\bsk-[A-Za-z0-9_-]{8,}\b", "sk-[REDACTED]", text)
-    text = re.sub(
-        r'(?i)(["\'](?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|cookie)["\']\s*:\s*)["\'][^"\']*["\']',
-        r'\1"[REDACTED]"',
-        text,
-    )
-    return text
+    return redact(value)
 
 
 def now_iso() -> str:

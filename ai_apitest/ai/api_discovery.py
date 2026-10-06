@@ -156,7 +156,7 @@ def generate_dependency_graph(
 
 只输出 JSON：
 ```json
-{{"edges": [{{"from": {{"method":"GET","path":"/api/generate"}}, "to": {{"method":"DELETE","path":"/api/delete/{{email}}"}}, "type": "produce_to_path_param", "produced_field": "email", "extract": {{"email": "$.email"}}, "inject": {{"path_params.email": "{{{{email}}}}"}}, "safe_to_prepare": true, "confidence": "high", "reason": "..."}}]}}
+{{"edges": [{{"from": {{"method":"POST","path":"/users"}}, "to": {{"method":"DELETE","path":"/users/{{id}}"}}, "type": "produce_to_path_param", "produced_field": "id", "extract": {{"id": "$.id"}}, "inject": {{"path_params.id": "{{{{id}}}}"}}, "safe_to_prepare": true, "confidence": "high", "reason": "..."}}]}}
 ```
 
 接口列表：

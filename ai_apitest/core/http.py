@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from ai_apitest.core.sandbox import ACTIVE_POLICY, check_url
+
 
 def fetch_text_limited(
     source: str,
@@ -14,9 +16,12 @@ def fetch_text_limited(
 ) -> str:
     """Download text without buffering an unbounded response body."""
     last_error: Exception | None = None
-    for trust_env in (True, False):
+    check_url(source)
+    policy = ACTIVE_POLICY.get()
+    for trust_env in ((False,) if policy and policy.mode != "off" else (True, False)):
         try:
-            with httpx.Client(timeout=timeout, trust_env=trust_env) as client:
+            hooks = {"request": [policy.request_hook]} if policy and policy.mode != "off" else None
+            with httpx.Client(timeout=timeout, trust_env=trust_env, event_hooks=hooks) as client:
                 with client.stream("GET", source, headers=headers or {}) as response:
                     response.raise_for_status()
                     declared = response.headers.get("content-length", "")

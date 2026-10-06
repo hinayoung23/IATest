@@ -109,6 +109,7 @@ def step_from_dict(data: dict[str, Any]) -> TestStep:
         body=data.get("body"),
         assertions=[assertion_from_dict(item) for item in data.get("assertions", [])],
         extract=data.get("extract", {}),
+        poll=data.get("poll", {}),
     )
 
 
@@ -141,6 +142,15 @@ def case_from_dict(data: dict[str, Any]) -> TestCase:
         rule_ids=string_list(data.get("rule_ids")),
         coverage_partition_ids=string_list(data.get("coverage_partition_ids")),
         fixture_requirements=string_list(data.get("fixture_requirements")),
+        variables=data.get("variables", {}),
+        dataset=data.get("dataset"),
+        dataset_id=str(data.get("dataset_id", "")),
+        origin_case_id=str(data.get("origin_case_id", "")),
+        identity=str(data.get("identity", "")),
+        resources=string_list(data.get("resources")),
+        parallel_safe=data.get("parallel_safe", False),
+        retry_safe=data.get("retry_safe", False),
+        poll=data.get("poll", {}),
     )
     return normalize_test_case(case, preserve_valid_id=True)
 

@@ -283,7 +283,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
     # Migration: add run_scope and case_ids columns for comparable trend analysis
-    for col, col_type in [("run_scope", "text not null default ''"), ("case_ids", "text not null default '[]'")]:
+    for col, col_type in [("run_scope", "text not null default ''"), ("case_ids", "text not null default '[]'"), ("metrics", "text not null default '{}'"), ("metadata", "text not null default '{}'" )]:
         try:
             conn.execute(f"alter table execution_trends add column {col} {col_type}")
         except sqlite3.OperationalError:
@@ -1260,7 +1260,7 @@ def trend_overview(root: Path, project: str, limit: int = 10) -> dict[str, Any]:
             """
             select run_id, created_at, total_cases, passed_cases, failed_cases, pass_rate,
                    failure_distribution, endpoint_metrics, latency_percentiles,
-                   delta_from_previous, known_issue_status, run_scope, case_ids
+                   delta_from_previous, known_issue_status, run_scope, case_ids, metrics, metadata
             from execution_trends
             where project = ?
             order by id desc
@@ -1278,6 +1278,8 @@ def trend_overview(root: Path, project: str, limit: int = 10) -> dict[str, Any]:
                 ("delta_from_previous", {}),
                 ("known_issue_status", {}),
                 ("case_ids", []),
+                ("metrics", {}),
+                ("metadata", {}),
             ]:
                 raw = d.get(col)
                 d[col] = loads_json(raw, default_val) if isinstance(raw, str) else (raw if raw is not None else default_val)
@@ -1296,6 +1298,10 @@ def assess_trend_comparability(latest: dict, previous: dict) -> dict:
     latest_scope = str(latest.get("run_scope", "") or "")
     prev_scope = str(previous.get("run_scope", "") or "")
     scope_mismatch = bool(prev_scope and latest_scope and prev_scope != latest_scope)
+    left, right = latest.get("metadata") or {}, previous.get("metadata") or {}
+    for field in ("environment", "environment_hash", "base_url", "contract_hash", "cases_hash", "dataset_hash", "fixture_hash", "framework_source_hash"):
+        if left.get(field) and right.get(field) and left[field] != right[field]:
+            return {"comparable": False, "confidence": "low", "note": f"两次执行的 {field} 不同，不可直接比较", "jaccard": None, "scope_mismatch": scope_mismatch}
 
     # Primary: scope mismatch → not comparable
     if scope_mismatch:
@@ -1329,11 +1335,17 @@ def assess_trend_comparability(latest: dict, previous: dict) -> dict:
 
 
 def save_execution_trend(root: Path, project: str, run_id: int, results: list[CaseResult], *, run_scope: str = "", case_ids: list[str] | None = None) -> None:
+    from ai_apitest.report.export import execution_metrics
+    from ai_apitest.report.storage import latest_run_metadata
+    metrics = execution_metrics(results)
+    metadata = latest_run_metadata(root, project)
+    if metadata.get("run_id") != run_id:
+        metadata = {}
     total = len(results)
     passed = sum(1 for item in results if item.status == "passed")
     failed = sum(1 for item in results if item.status == "failed")
     _case_ids = case_ids or [item.case_id for item in results]
-    pass_rate = passed / total if total else 0.0
+    pass_rate = metrics["execution_pass_rate"] or 0.0
     endpoint_metrics = []
     by_endpoint: dict[tuple[str, str], list[CaseResult]] = {}
     for result in results:
@@ -1345,10 +1357,11 @@ def save_execution_trend(root: Path, project: str, run_id: int, results: list[Ca
                 "path": path,
                 "passed": sum(1 for item in items if item.status == "passed"),
                 "failed": sum(1 for item in items if item.status == "failed"),
-                "avg_ms": int(sum(item.elapsed_ms for item in items) / len(items)) if items else 0,
+                "skipped": sum(item.status == "skipped" for item in items),
+                "avg_ms": int(sum(item.elapsed_ms for item in items if item.status in {"passed", "failed"}) / max(1, sum(item.status in {"passed", "failed"} for item in items))),
             }
         )
-    latencies = sorted(item.elapsed_ms for item in results)
+    latencies = sorted(item.elapsed_ms for item in results if item.status in {"passed", "failed"})
     percentiles = {
         "p50": percentile(latencies, 0.50),
         "p90": percentile(latencies, 0.90),
@@ -1373,8 +1386,8 @@ def save_execution_trend(root: Path, project: str, run_id: int, results: list[Ca
             insert into execution_trends(
                 run_id, project, created_at, total_cases, passed_cases, failed_cases,
                 pass_rate, failure_distribution, endpoint_metrics, latency_percentiles,
-                known_issue_status, delta_from_previous, run_scope, case_ids
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                known_issue_status, delta_from_previous, run_scope, case_ids, metrics, metadata
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id,
@@ -1391,6 +1404,8 @@ def save_execution_trend(root: Path, project: str, run_id: int, results: list[Ca
                 dumps(delta),
                 run_scope,
                 dumps(_case_ids),
+                dumps(metrics),
+                dumps(metadata),
             ),
         )
         audit(conn, "trend_snapshot_created", "execution_trend", str(run_id), safe_project, "system", {"total": total, "passed": passed, "failed": failed})
