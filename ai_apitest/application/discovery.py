@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ai_apitest.agents.policy import bounded_task
 
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ from ai_apitest.application.agent_service import run_agent_role
 GatewayFactory = Callable[[dict[str, Any]], ModelGatewayProtocol]
 
 
+@bounded_task
 def discover_endpoints_with_agent_runtime(
     root: Path,
     project: str,
@@ -132,6 +134,7 @@ def endpoint_key_payload(endpoints: list[Endpoint]) -> list[dict[str, str]]:
     return result
 
 
+@bounded_task
 def generate_dependency_graph_with_agent_runtime(
     root: Path,
     project: str,

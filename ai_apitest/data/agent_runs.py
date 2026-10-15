@@ -6,6 +6,7 @@ import re
 import sqlite3
 import threading
 import uuid
+from dataclasses import asdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -165,14 +166,15 @@ class AgentRunRepository:
             )
         return run_id
 
-    def record_turn(self, run_id: str, turn_index: int, response: ModelResponse) -> None:
+    def record_turn(self, run_id: str, turn_index: int, response: ModelResponse, *, request_metrics: dict | None = None, error: str = "") -> None:
         with self.connection() as conn:
             conn.execute(
                 """
                 insert into agent_turns(
                     run_id, turn_index, finish_reason, input_tokens, output_tokens,
-                    total_tokens, response_hash, text_excerpt, tool_call_count, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    total_tokens, response_hash, text_excerpt, tool_call_count, created_at,
+                    usage_json, request_metrics_json, error
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -185,6 +187,9 @@ class AgentRunRepository:
                     redact_text(response.text)[:4000],
                     len(response.tool_calls),
                     now_iso(),
+                    compact_json(redact_sensitive(asdict(response.usage)), 12000),
+                    compact_json(redact_sensitive(request_metrics or {}), 12000),
+                    redact_text(error)[:2000],
                 ),
             )
 
@@ -391,6 +396,7 @@ class AgentRunRepository:
                     run_id,
                 ),
             )
+            conn.execute("update agent_runs set usage_json = ? where id = ?", (compact_json(redact_sensitive(asdict(usage)), 12000), run_id))
             from ai_apitest.core.config import load_config
 
             retain = max(10, int(load_config(self.root).get("retention", {}).get("agent_runs", 500)))
@@ -437,6 +443,14 @@ def ensure_agent_schema_once(conn: sqlite3.Connection, path: Path) -> None:
         columns = {str(row[1]) for row in conn.execute("pragma table_info(agent_runs)").fetchall()}
         if "artifact_json" not in columns:
             conn.execute("alter table agent_runs add column artifact_json text default ''")
+        if "usage_json" not in columns:
+            conn.execute("alter table agent_runs add column usage_json text not null default '{}'")
+        turn_columns = {str(row[1]) for row in conn.execute("pragma table_info(agent_turns)")}
+        for column in ("usage_json", "request_metrics_json"):
+            if column not in turn_columns:
+                conn.execute(f"alter table agent_turns add column {column} text not null default '{{}}'")
+        if "error" not in turn_columns:
+            conn.execute("alter table agent_turns add column error text not null default ''")
         _SCHEMA_READY[key] = inode
 
 

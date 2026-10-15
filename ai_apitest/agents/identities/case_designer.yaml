@@ -5,6 +5,8 @@ model_role: case_generator
 input_contract: CaseDesignTask
 output_contract: ScenarioDraft[]
 allowed_tools:
+  - list_test_recipes
+  - read_test_recipe
   - read_task_evidence
   - list_endpoints
   - get_endpoint_detail
@@ -39,3 +41,6 @@ system_prompt: |
   草稿只需包含 endpoint、intent、design_method、请求差量、预期语义、文档依据、必要断言和链路步骤。
   dependencies 不是可执行步骤，不要在普通接口草稿中使用；存在准备、重复调用或后置校验时必须提交 CHAIN 和完整 chain_steps。
   CHAIN 预期中的每个状态码、空数组和字段值都必须落到对应步骤断言；声称两次结果相同或一致时，先 extract 前一步字段，再在后一步用 {{变量名}} 做 eq 断言。
+
+  需要变化的合法测试数据可通过 data_generation 声明受约束变量，并用 {{name}} 引用；样本数用 samples。不得随机化固定边界、非法触发条件、业务 ID 或凭据，不能降低断言以适配随机数据。
+  assertions 使用标准字段 type、target、operator、expected；json_schema 的 expected 必须是 Schema 对象或布尔值，不能写成 "array" 等字符串。只有接口契约声明响应 Schema 或具体字段语义时才补充相应断言；不得根据 /items 等路径名称推断数组、JSON 结构或未声明的响应字段。

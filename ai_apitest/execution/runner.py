@@ -262,7 +262,21 @@ def _run_cases_unlocked(
 
 def _run_cases_with_policy(root: Path, config: dict, environment: dict, case_ids: set[str] | None, project: str, *, run_scope: str, options: RunOptions, control: RunControl | None, plugins: PluginRegistry | None) -> list[CaseResult]:
     max_input = int(positive(config.get("sandbox", {}), "max_input_bytes", 64_000_000))
-    cases = options.select(expand_cases(load_cases(root, project, max_bytes=max_input), root, config), case_ids)
+    cases = options.select(expand_cases(load_cases(root, project, max_bytes=max_input), root, config, samples=options.samples), case_ids)
+    if any(case.data_generation for case in cases):
+        from ai_apitest.execution.data_contracts import contract_map
+        with policy_scope(None):
+            documents = project_docs_file(root, project)
+            contracts = json.loads(read_file(documents, max_input)) if documents.is_file() else []
+        keys = {(step.method, step.path) for case in cases for step in [*case.setup_steps, *case.steps, *case.cleanup_steps]}
+        keys.update((case.method, case.path) for case in cases)
+        config.setdefault("execution", {})["generation_contracts"] = contract_map([endpoint_from_dict(item) for item in contracts if (item.get("method"), item.get("path")) in keys])
+    replay_metadata = {}
+    if options.replay_run is not None:
+        from ai_apitest.execution.replay import replay_inputs
+        values, replay_metadata = replay_inputs(root, project, options.replay_run, cases)
+        config.setdefault("execution", {})["replay_values"] = values
+        cases = [case for case in cases if case.id in values]
     if options.rerun_failed:
         from ai_apitest.report.storage import latest_results
         _, previous = latest_results(root, project)
@@ -270,17 +284,25 @@ def _run_cases_with_policy(root: Path, config: dict, environment: dict, case_ids
         cases = [case for case in cases if case.id in failed_ids]
     if not cases:
         return []
+    if options.replay_run is None:
+        from ai_apitest.execution.sampling_plan import plan_samples
+        config.setdefault("execution", {})["_fixed_sampling"] = options.seed is not None or config.get("execution", {}).get("random_seed") is not None
+        cases = plan_samples(cases, root, project, config)
     seed = options.seed if options.seed is not None else config.get("execution", {}).get("random_seed")
+    seed = replay_metadata.get("seed", seed) if replay_metadata else seed
     seed = seed if seed is not None else uuid.uuid4().hex
     config.setdefault("execution", {})["random_seed"] = seed
     config["execution"]["failure_retries"] = options.retries
-    namespace = uuid.uuid4().hex
+    namespace = replay_metadata.get("sandbox", {}).get("namespace") or uuid.uuid4().hex
     config["execution"]["namespace"] = namespace
     inherited = ACTIVE_RUNTIME.get()
     timeout_seconds = options.timeout_seconds or config["execution"].get("total_timeout_seconds")
     control = control or RunControl(timeout_seconds=timeout_seconds,
         cancelled=inherited.control.cancelled if inherited else threading.Event(),
         cancellation_check=inherited.control.cancellation_check if inherited else None)
+    if config["execution"].get("max_requests") is not None:
+        control.max_requests = config["execution"]["max_requests"]
+        control.__post_init__()
     policy = ACTIVE_POLICY.get()
     if plugins and policy and policy.mode != "off" and not policy.allow_plugins:
         raise SandboxViolation("沙箱默认禁用插件；可信插件需显式设置 sandbox.allow_plugins=true")
@@ -316,7 +338,10 @@ def _run_cases_with_policy(root: Path, config: dict, environment: dict, case_ids
         result.dataset_id = case.dataset_id
         if control.reason() and result.status == "failed":
             result.status = "cancelled"
+    metadata["request_budget"] = {"limit": control.max_requests, "requests_started": max([control.request_count(), *(result.execution_meta.get("requests_started", 0) for result in results)]), "cleanup_has_separate_timeout": True}
     run_id = save_run(root, results, project=project, metadata=metadata)
+    from ai_apitest.execution.sampling_plan import record_samples
+    record_samples(root, project, results)
     for result in results:
         result.run_id = run_id
     run_case_ids = [item.case_id for item in results]
@@ -435,6 +460,16 @@ def run_ordered_cases(
                     context["iatest_namespace"] = config["execution"]["namespace"]
                 seed = config.get("execution", {}).get("random_seed")
                 context["_iatest_builtin_context"] = seeded_variables(seed, case.id) if seed is not None else initial_context()
+                from ai_apitest.execution.data_generation import generate_values, GENERATOR_VERSION
+                from ai_apitest.execution.provenance import recipe_fingerprint, fingerprint
+                generated = config.get("execution", {}).get("replay_values", {}).get(case.id)
+                if generated is None:
+                    from ai_apitest.execution.sampling_plan import selected_rules
+                    from ai_apitest.execution.data_contracts import bind_rules
+                    rules = bind_rules(case, selected_rules(case), config.get("execution", {}).get("generation_contracts", {}))
+                    generated = generate_values(rules, seed if seed is not None else uuid.uuid4().hex, case.id, context.get("iatest_namespace", ""))
+                    generated.update({name: copy.deepcopy(case.variables[name]) for name in case.data_generation if name in case.variables})
+                context.update(copy.deepcopy(generated))
                 fixture = FixtureManager(config, session, plugins=runtime.plugins) if fixture_manager is not None or case.fixture_requirements else None
                 history = []
                 retries = max(0, int(config.get("execution", {}).get("failure_retries", 0))) if retry_is_safe(case) else 0
@@ -448,6 +483,9 @@ def run_ordered_cases(
                     history.append(asdict(result))
                 result.origin_case_id = case.origin_case_id or case.id
                 result.dataset_id = case.dataset_id
+                result.generated_data = generated
+                if case.data_generation:
+                    result.generation_meta = {"version": GENERATOR_VERSION, "seed": seed, "namespace": context.get("iatest_namespace", ""), "sample_index": case.sample_index, "recipe_hash": recipe_fingerprint(case), "generated_hash": fingerprint(generated), "plan": case.sample_plan}
                 result.flaky = bool(history and result.status == "passed")
                 result.attempt_history = history
                 if runtime.control.reason() and result.status == "failed":
@@ -471,6 +509,7 @@ def run_ordered_cases(
 
     def execute(case: TestCase) -> CaseResult:
         result = execute_one(case)
+        result.execution_meta = {"requests_started": runtime.control.request_count()}
         if on_result:
             on_result(result)
         return result
@@ -913,6 +952,7 @@ def execute_step(
     parent = ACTIVE_RUNTIME.get()
     remaining = max(0.001, parent.control.timeout_seconds - (time.monotonic() - parent.control.started)) if parent and parent.control.timeout_seconds is not None else None
     poll_control = RunControl(timeout_seconds=min(timeout, remaining) if remaining is not None else timeout,
+        request_parent=parent.control if parent else None,
                               cancelled=parent.control.cancelled if parent else threading.Event(),
                               cancellation_check=parent.control.cancellation_check if parent else None)
     runtime = replace(parent, control=poll_control) if parent else ExecutionRuntime(control=poll_control)
@@ -975,6 +1015,8 @@ def _execute_step_once(
         path_params = render_template(step.path_params, context)
         query = render_template(step.query, context)
         body = render_template(step.body, context)
+        from ai_apitest.execution.data_contracts import validate_generated_request
+        validate_generated_request(runtime.case if runtime else None, step, body, query, path_params, headers, config.get("execution", {}).get("generation_contracts", {}))
         path = apply_path_params(step.path, path_params, step.parameter_serialization)
         if query:
             path = f"{path}?{encode_query(query, step.parameter_serialization)}"

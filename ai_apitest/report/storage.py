@@ -229,18 +229,20 @@ def current_run_results(root: Path, project: str, cases: list) -> dict[str, dict
     """Give execution credit only to unchanged inputs from the latest run."""
     from ai_apitest.core.paths import project_docs_file
     from ai_apitest.core.serde import read_json
-    from ai_apitest.execution.provenance import fingerprint
+    from ai_apitest.execution.provenance import fingerprint, recipe_fingerprint
     from ai_apitest.execution.datasets import expand_cases
     metadata = latest_run_metadata(root, project)
     if not metadata or metadata.get("contract_hash") != fingerprint(read_json(project_docs_file(root, project), [])):
         return {}
-    hashes = {item["case_id"]: item["hash"] for item in metadata.get("case_hashes", [])}
+    aliases = {item["case_id"]: item.get("recipe_id", item["case_id"]) for item in metadata.get("case_hashes", [])}
+    hashes = {item.get("recipe_id", item["case_id"]): item["hash"] for item in metadata.get("case_hashes", [])}
     expanded = expand_cases(cases, root, load_config(root))
-    valid = {case.id: case for case in expanded if hashes.get(case.id) == fingerprint(asdict(case))}
+    valid = {case.sample_origin_id or case.id: case for case in expanded if hashes.get(case.sample_origin_id or case.id) == recipe_fingerprint(case)}
     _, rows = latest_results(root, project)
     grouped: dict[str, list[dict]] = {}
     for row in rows:
-        if row["case_id"] in valid:
-            origin = valid[row["case_id"]].origin_case_id or row["case_id"]
+        key = aliases.get(row["case_id"], row["case_id"])
+        if key in valid:
+            origin = valid[key].origin_case_id or key
             grouped.setdefault(origin, []).append(row)
     return {origin: {"case_id": origin, "run_id": metadata["run_id"], "status": next(status for status in ("failed", "cancelled", "skipped", "passed") if any(row["status"] == status for row in rows))} for origin, rows in grouped.items()}

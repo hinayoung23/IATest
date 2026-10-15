@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ai_apitest.agents.policy import bounded_task
 
 import json
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ class MaintenanceResult:
     warning: str = ""
 
 
+@bounded_task
 def maintain_cases_with_agent_runtime(
     root: Path,
     project: str,

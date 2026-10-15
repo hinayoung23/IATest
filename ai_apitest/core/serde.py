@@ -151,6 +151,11 @@ def case_from_dict(data: dict[str, Any]) -> TestCase:
         parallel_safe=data.get("parallel_safe", False),
         retry_safe=data.get("retry_safe", False),
         poll=data.get("poll", {}),
+        data_generation=data.get("data_generation", {}),
+        samples=data.get("samples", 1),
+        sample_index=data.get("sample_index", 0),
+        sample_origin_id=str(data.get("sample_origin_id", "")),
+        sample_plan=data.get("sample_plan", {}),
     )
     return normalize_test_case(case, preserve_valid_id=True)
 

@@ -1,0 +1,50 @@
+{
+  "tasks": [
+    {
+      "id": "quality-contradictory-status",
+      "role": "quality_reviewer",
+      "prompt": "Audit the candidate against the trusted contract and hard-gate evidence. Read the complete audit evidence through tools before submitting an independent quality decision. Do not invent endpoint facts.",
+      "state": {
+        "audit_artifact_text": "{\"artifact_type\":\"test_cases\",\"trusted_endpoints\":[{\"method\":\"GET\",\"path\":\"/health\",\"responses\":{\"200\":{\"description\":\"Success\"}}}],\"candidate\":[{\"id\":\"TC-HEALTH-0001\",\"design_method\":\"happy_path\",\"method\":\"GET\",\"path\":\"/health\",\"expected_basis\":\"responses.200\",\"assertions\":[{\"type\":\"status_code\",\"operator\":\"eq\",\"expected\":500}]}],\"hard_gate\":{\"passed\":false,\"errors\":[{\"case_id\":\"TC-HEALTH-0001\",\"field\":\"assertions[0].expected\",\"reason\":\"Happy path asserts undocumented HTTP 500; trusted success response is 200.\"}]}}"
+      },
+      "responses": [
+        {"tool_calls": [{"name": "get_audit_artifact_info", "arguments": {}}]},
+        {"tool_calls": [{"name": "read_audit_artifact_chunk", "arguments": {"offset": 0, "max_chars": 700}}]},
+        {
+          "tool_calls": [
+            {
+              "name": "submit_quality_review",
+              "arguments": {
+                "verdict": "needs_revision",
+                "confidence": "high",
+                "dimension_scores": {"reliability": 10, "completeness": 85, "reasonableness": 10, "non_redundancy": 100},
+                "summary": "The happy-path status assertion contradicts the trusted HTTP 200 response.",
+                "issues": [
+                  {
+                    "severity": "critical",
+                    "dimension": "reliability",
+                    "location": "TC-HEALTH-0001 assertions[0].expected",
+                    "evidence": "Trusted response is 200, but the candidate asserts 500.",
+                    "reason": "The assertion contradicts the documented success response.",
+                    "suggested_fix": "Use the trusted success status 200."
+                  }
+                ],
+                "suggestions": [],
+                "coverage_gaps": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "object",
+          "properties": {"verdict": {"enum": ["needs_revision", "rejected"]}, "issues": {"type": "array", "minItems": 1}},
+          "required": ["verdict", "issues", "dimension_scores"]
+        },
+        "required_tools": ["get_audit_artifact_info", "read_audit_artifact_chunk", "submit_quality_review"],
+        "max_tool_calls": 4
+      }
+    }
+  ]
+}

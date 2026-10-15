@@ -21,6 +21,8 @@ ALL_AGENT_ROLES = (
 
 def build_case_generation_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
+    from ai_apitest.agents.recipes import register_recipe_tools
+    register_recipe_tools(registry)
     registry.register(
         ToolSpec(
             name="read_task_evidence",
@@ -235,6 +237,9 @@ def build_case_generation_tool_registry() -> ToolRegistry:
                                 "expected_outcome",
                             ],
                             "properties": {
+                                "variables": {"type": "object"},
+                                "data_generation": {"type": "object"},
+                                "samples": {"type": "integer", "minimum": 1, "maximum": 10000},
                                 "scenario_id": {"type": "string", "minLength": 1},
                                 "endpoint_method": {"type": "string", "minLength": 1},
                                 "endpoint_path": {"type": "string"},
@@ -246,7 +251,24 @@ def build_case_generation_tool_registry() -> ToolRegistry:
                                 "omit_fields": {"type": "array", "items": {"type": "string"}},
                                 "expected_outcome": {"type": "string", "minLength": 1},
                                 "expected_basis": {"type": "string"},
-                                "assertions": {"type": "array", "items": {"type": "object"}},
+                                "assertions": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "description": "使用标准断言字段，例如 {type: status_code, operator: eq, expected: 200} 或 {type: json_path, target: $.id, operator: exists}。",
+                                        "properties": {
+                                            "type": {"type": "string", "enum": ["status_code", "json_path", "header", "body_contains", "json_schema", "response_time", "custom"]},
+                                            "target": {"type": "string"},
+                                            "operator": {"type": "string"},
+                                            "expected": {},
+                                        },
+                                        "if": {"properties": {"type": {"const": "json_schema"}}, "required": ["type"]},
+                                        "then": {
+                                            "properties": {"expected": {"type": ["object", "boolean"]}, "value": {"type": ["object", "boolean"]}},
+                                            "anyOf": [{"required": ["expected"]}, {"required": ["value"]}],
+                                        },
+                                    },
+                                },
                                 "chain_steps": {"type": "array", "items": {"type": "object"}},
                                 "rule_ids": {"type": "array", "items": {"type": "string"}},
                                 "coverage_partition_ids": {
@@ -541,7 +563,7 @@ def build_case_generation_tool_registry() -> ToolRegistry:
             input_schema=object_schema(
                 {
                     "offset": {"type": "integer", "minimum": 0},
-                    "max_chars": {"type": "integer", "minimum": 1000, "maximum": 180000},
+                    "max_chars": {"type": "integer", "minimum": 1, "maximum": 180000},
                 },
                 required=["offset"],
             ),

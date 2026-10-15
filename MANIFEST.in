@@ -4,3 +4,6 @@ include examples/openapi.json
 include examples/test_support_server.py
 include examples/fixture-providers.json
 include examples/Dockerfile.sandbox
+recursive-include examples/evals *.json
+recursive-include examples/recipes SKILL.md
+include scripts/validate_token_optimization.py

@@ -4098,8 +4098,10 @@ def case_from_form(existing, form: dict):
             payload[name] = request_data[name]
     if any(type(payload[name]) is not bool for name in ("parallel_safe", "retry_safe")):
         raise ValueError("parallel_safe 和 retry_safe 必须是布尔值")
-    if any(not isinstance(payload[name], dict) for name in ("variables", "poll")):
-        raise ValueError("variables 和 poll 必须是 JSON 对象")
+    if any(not isinstance(payload[name], dict) for name in ("variables", "poll", "data_generation")):
+        raise ValueError("variables、poll 和 data_generation 必须是 JSON 对象")
+    if type(payload["samples"]) is not int or not 1 <= payload["samples"] <= 10000:
+        raise ValueError("samples 必须为 1 至 10000")
     if not isinstance(payload["resources"], list) or any(not isinstance(name, str) or not name for name in payload["resources"]):
         raise ValueError("resources 必须是非空资源名称数组")
     for name in ("headers", "path_params", "query", "parameter_serialization"):

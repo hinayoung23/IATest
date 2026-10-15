@@ -51,6 +51,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_rate_limit_wait_seconds": 120,
         "max_request_bytes": 20000000,
         "max_response_bytes": 5000000,
+        "max_requests": None,
+        "sampling": {"prioritize_failures": True},
     },
     "fixtures": {
         "timeout_seconds": 10,
@@ -161,6 +163,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "custom_strategies": [],
     },
     "agents": {
+        "task_budget": {"enabled": False, "max_tokens": 256000, "max_tool_calls": 500, "timeout_seconds": 1800},
+        "model_routing": {"rules": []},
+        "recipes": {"paths": []},
+        "token_optimization": {
+            "enabled": True,
+            "evidence_dedup": True,
+            "prefetch": True,
+            "incremental_audit": True,
+            "adaptive_batches": True,
+            "prefetch_max_tokens": 18000,
+            "batch_input_tokens": 18000,
+            "audit_output_tokens": 6000,
+        },
         "case_generation_mode": "agent",
         "api_discovery_mode": "agent",
         "report_analysis_mode": "agent",

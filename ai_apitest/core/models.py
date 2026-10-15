@@ -81,10 +81,15 @@ class TestCase:
     parallel_safe: bool = False
     retry_safe: bool = False
     poll: dict[str, Any] = field(default_factory=dict)
+    data_generation: dict[str, Any] = field(default_factory=dict)
+    samples: int = 1
+    sample_index: int = 0
+    sample_origin_id: str = ""
+    sample_plan: dict[str, Any] = field(default_factory=dict)
 
 
 def execution_case_options(case: TestCase) -> dict[str, Any]:
-    return {name: getattr(case, name) for name in ("variables", "dataset", "identity", "resources", "parallel_safe", "retry_safe", "poll")}
+    return {name: getattr(case, name) for name in ("variables", "dataset", "identity", "resources", "parallel_safe", "retry_safe", "poll", "data_generation", "samples")}
 
 
 @dataclass(slots=True)
@@ -112,3 +117,6 @@ class CaseResult:
     dataset_id: str = ""
     flaky: bool = False
     attempt_history: list[dict[str, Any]] = field(default_factory=list)
+    generated_data: dict[str, Any] = field(default_factory=dict)
+    generation_meta: dict[str, Any] = field(default_factory=dict)
+    execution_meta: dict[str, Any] = field(default_factory=dict)

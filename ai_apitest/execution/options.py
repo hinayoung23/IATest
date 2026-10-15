@@ -20,8 +20,14 @@ class RunOptions:
     rerun_failed: bool = False
     retries: int = 0
     isolation: str = ""
+    samples: int | None = None
+    replay_run: int | None = None
 
     def __post_init__(self) -> None:
+        if self.samples is not None and (type(self.samples) is not int or not 1 <= self.samples <= 10000):
+            raise ValueError("samples 必须为 1 至 10000")
+        if self.replay_run is not None and (type(self.replay_run) is not int or self.replay_run <= 0 or self.rerun_failed):
+            raise ValueError("replay_run 必须为正整数，且不能与 rerun_failed 同用")
         if self.isolation and self.isolation not in {"off", "policy", "process", "container"}:
             raise ValueError("隔离模式仅支持 off/policy/process/container")
         if self.shard_count < 1 or not 1 <= self.shard_index <= self.shard_count:
@@ -35,12 +41,12 @@ class RunOptions:
 
     def select(self, cases: Iterable[TestCase], ids: set[str] | None = None) -> list[TestCase]:
         cases = list(cases)
-        known = {item for case in cases for item in (case.id, case.origin_case_id) if item}
+        known = {item for case in cases for item in (case.id, case.origin_case_id, case.sample_origin_id) if item}
         if ids is not None and ids - known:
             raise ValueError(f"指定的用例不存在：{', '.join(sorted(ids - known))}")
         return [
             case for case in cases
-            if (ids is None or case.id in ids or case.origin_case_id in ids)
+            if (ids is None or case.id in ids or case.origin_case_id in ids or case.sample_origin_id in ids)
             and (not self.tags or self.tags.intersection(case.tags))
             and (not self.priorities or case.priority in self.priorities)
             and int(hashlib.sha256(case.id.encode()).hexdigest(), 16) % self.shard_count == self.shard_index - 1

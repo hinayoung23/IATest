@@ -1,0 +1,3801 @@
+{
+  "version": 1,
+  "description": "30 baseline tasks: document reading, coverage planning and scenario compilation. Replay success validates infrastructure; use --live for model capability.",
+  "tasks": [
+    {
+      "id": "discovery-01",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint GET /health; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"GET\", \"path\": \"/health\", \"summary\": \"endpoint 1\", \"parameters\": [], \"request_body\": null, \"responses\": {\"200\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "GET",
+            "path": "/health"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "GET",
+                    "path": "/health",
+                    "summary": "endpoint 1",
+                    "parameters": [],
+                    "request_body": null,
+                    "responses": {
+                      "200": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/health"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-01",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for GET /health with documented status 200; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/health",
+          "summary": "endpoint 1",
+          "parameters": [],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/health"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-01",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/health",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 200",
+                    "expected_basis": "responses.200",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 200
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/health"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/health"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 200
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-01",
+      "role": "test_planner",
+      "prompt": "Read endpoint details for GET /health. Standard happy_path, optional/type/boundary/status-code coverage is already generated. Identify additional business semantics only; submit an empty plan if the trusted endpoint declares none. Standard cases already cover every declared schema constraint, including enums, multipleOf, min/max lengths, nested fields and array sizes. No additional error status or business behavior is documented.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/health",
+          "summary": "endpoint 1",
+          "parameters": [],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/health"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "discovery-02",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint GET /items; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"GET\", \"path\": \"/items\", \"summary\": \"endpoint 2\", \"parameters\": [{\"name\": \"limit\", \"in\": \"query\", \"schema\": {\"type\": \"integer\", \"minimum\": 1, \"maximum\": 50}}], \"request_body\": null, \"responses\": {\"200\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "GET",
+            "path": "/items"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "GET",
+                    "path": "/items",
+                    "summary": "endpoint 2",
+                    "parameters": [
+                      {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 50
+                        }
+                      }
+                    ],
+                    "request_body": null,
+                    "responses": {
+                      "200": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/items"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-02",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for GET /items with documented status 200; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/items",
+          "summary": "endpoint 2",
+          "parameters": [
+            {
+              "name": "limit",
+              "in": "query",
+              "schema": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/items"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-02",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/items",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 200",
+                    "expected_basis": "responses.200",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 200
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/items"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/items"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 200
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-02",
+      "role": "test_planner",
+      "prompt": "Read endpoint details and the declared business rule for GET /items. Standard schema and status coverage is already generated; it does not check the conditional segment mapping. Plan exactly one additional business scenario for the declared conditional rule, preserve its rule_id, and do not repeat generic happy_path coverage.",
+      "tools": [
+        "get_endpoint_detail",
+        "get_business_rule_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/items",
+          "summary": "endpoint 2",
+          "parameters": [
+            {
+              "name": "limit",
+              "in": "query",
+              "schema": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              }
+            },
+            {
+              "name": "X-Eval-Segment",
+              "in": "header",
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "segment2"
+                ]
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "segment"
+                    ],
+                    "properties": {
+                      "segment": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "business_rules": [
+            {
+              "rule_id": "segment-02",
+              "title": "Conditional business result for segment2",
+              "source_text": "When X-Eval-Segment is segment2, a successful response has JSON segment equal to segment2. This conditional mapping is a business requirement, not a fixed response-schema value.",
+              "testable": true,
+              "runnable": true,
+              "trigger": {
+                "request_overrides": {
+                  "headers": {
+                    "X-Eval-Segment": "segment2"
+                  }
+                },
+                "omit_fields": [],
+                "chain_steps": []
+              },
+              "expected": {
+                "status": 200,
+                "basis": "responses.200",
+                "assertions": [
+                  {
+                    "type": "status_code",
+                    "operator": "eq",
+                    "expected": 200
+                  },
+                  {
+                    "type": "json_path",
+                    "target": "$.segment",
+                    "operator": "eq",
+                    "expected": "segment2"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/items"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "get_business_rule_detail",
+              "arguments": {
+                "rule_id": "segment-02"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": [
+                  {
+                    "scenario_id": "SCN-PLAN-02",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/items",
+                    "design_method": "equivalence_class",
+                    "priority": "P1",
+                    "title_hint": "Business mapping for segment2",
+                    "expected_basis": "responses.200",
+                    "coverage_tags": [
+                      "business_rule"
+                    ],
+                    "rule_ids": [
+                      "segment-02"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/items"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_ids": {
+                "type": "array",
+                "contains": {
+                  "const": "segment-02"
+                }
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis",
+              "rule_ids"
+            ]
+          }
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "discovery-03",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint POST /users; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"POST\", \"path\": \"/users\", \"summary\": \"endpoint 3\", \"parameters\": [], \"request_body\": {\"content\": {\"application/json\": {\"schema\": {\"type\": \"object\", \"required\": [\"name\"], \"properties\": {\"name\": {\"type\": \"string\", \"minLength\": 3, \"maxLength\": 12}}}}}}, \"responses\": {\"201\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "POST",
+            "path": "/users"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "POST",
+                    "path": "/users",
+                    "summary": "endpoint 3",
+                    "parameters": [],
+                    "request_body": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "required": [
+                              "name"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "minLength": 3,
+                                "maxLength": 12
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {
+                      "201": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/users"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-03",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for POST /users with documented status 201; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/users",
+          "summary": "endpoint 3",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 12
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/users"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-03",
+                    "endpoint_method": "POST",
+                    "endpoint_path": "/users",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 201",
+                    "expected_basis": "responses.201",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 201
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "POST"
+              },
+              "endpoint_path": {
+                "const": "/users"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/users"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 201
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-03",
+      "role": "test_planner",
+      "prompt": "Read endpoint details for POST /users. Standard happy_path, optional/type/boundary/status-code coverage is already generated. Identify additional business semantics only; submit an empty plan if the trusted endpoint declares none. Standard cases already cover every declared schema constraint, including enums, multipleOf, min/max lengths, nested fields and array sizes. No additional error status or business behavior is documented.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/users",
+          "summary": "endpoint 3",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "name"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 12
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/users"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "discovery-04",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint GET /search; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"GET\", \"path\": \"/search\", \"summary\": \"endpoint 4\", \"parameters\": [{\"name\": \"q\", \"in\": \"query\", \"required\": true, \"schema\": {\"type\": \"string\", \"minLength\": 1}}], \"request_body\": null, \"responses\": {\"200\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "GET",
+            "path": "/search"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "GET",
+                    "path": "/search",
+                    "summary": "endpoint 4",
+                    "parameters": [
+                      {
+                        "name": "q",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    ],
+                    "request_body": null,
+                    "responses": {
+                      "200": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/search"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-04",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for GET /search with documented status 200; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/search",
+          "summary": "endpoint 4",
+          "parameters": [
+            {
+              "name": "q",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/search"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-04",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/search",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 200",
+                    "expected_basis": "responses.200",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 200
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/search"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/search"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 200
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-04",
+      "role": "test_planner",
+      "prompt": "Read endpoint details and the declared business rule for GET /search. Standard schema and status coverage is already generated; it does not check the conditional segment mapping. Plan exactly one additional business scenario for the declared conditional rule, preserve its rule_id, and do not repeat generic happy_path coverage.",
+      "tools": [
+        "get_endpoint_detail",
+        "get_business_rule_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/search",
+          "summary": "endpoint 4",
+          "parameters": [
+            {
+              "name": "q",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "name": "X-Eval-Segment",
+              "in": "header",
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "segment4"
+                ]
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "segment"
+                    ],
+                    "properties": {
+                      "segment": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "business_rules": [
+            {
+              "rule_id": "segment-04",
+              "title": "Conditional business result for segment4",
+              "source_text": "When X-Eval-Segment is segment4, a successful response has JSON segment equal to segment4. This conditional mapping is a business requirement, not a fixed response-schema value.",
+              "testable": true,
+              "runnable": true,
+              "trigger": {
+                "request_overrides": {
+                  "headers": {
+                    "X-Eval-Segment": "segment4"
+                  }
+                },
+                "omit_fields": [],
+                "chain_steps": []
+              },
+              "expected": {
+                "status": 200,
+                "basis": "responses.200",
+                "assertions": [
+                  {
+                    "type": "status_code",
+                    "operator": "eq",
+                    "expected": 200
+                  },
+                  {
+                    "type": "json_path",
+                    "target": "$.segment",
+                    "operator": "eq",
+                    "expected": "segment4"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/search"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "get_business_rule_detail",
+              "arguments": {
+                "rule_id": "segment-04"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": [
+                  {
+                    "scenario_id": "SCN-PLAN-04",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/search",
+                    "design_method": "equivalence_class",
+                    "priority": "P1",
+                    "title_hint": "Business mapping for segment4",
+                    "expected_basis": "responses.200",
+                    "coverage_tags": [
+                      "business_rule"
+                    ],
+                    "rule_ids": [
+                      "segment-04"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/search"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_ids": {
+                "type": "array",
+                "contains": {
+                  "const": "segment-04"
+                }
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis",
+              "rule_ids"
+            ]
+          }
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "discovery-05",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint POST /flags; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"POST\", \"path\": \"/flags\", \"summary\": \"endpoint 5\", \"parameters\": [], \"request_body\": {\"content\": {\"application/json\": {\"schema\": {\"type\": \"object\", \"properties\": {\"enabled\": {\"type\": \"boolean\"}}}}}}, \"responses\": {\"200\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "POST",
+            "path": "/flags"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "POST",
+                    "path": "/flags",
+                    "summary": "endpoint 5",
+                    "parameters": [],
+                    "request_body": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "enabled": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {
+                      "200": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/flags"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-05",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for POST /flags with documented status 200; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/flags",
+          "summary": "endpoint 5",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/flags"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-05",
+                    "endpoint_method": "POST",
+                    "endpoint_path": "/flags",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 200",
+                    "expected_basis": "responses.200",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 200
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "POST"
+              },
+              "endpoint_path": {
+                "const": "/flags"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/flags"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 200
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-05",
+      "role": "test_planner",
+      "prompt": "Read endpoint details for POST /flags. Standard happy_path, optional/type/boundary/status-code coverage is already generated. Identify additional business semantics only; submit an empty plan if the trusted endpoint declares none. Standard cases already cover every declared schema constraint, including enums, multipleOf, min/max lengths, nested fields and array sizes. No additional error status or business behavior is documented.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/flags",
+          "summary": "endpoint 5",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/flags"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "discovery-06",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint GET /states; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"GET\", \"path\": \"/states\", \"summary\": \"endpoint 6\", \"parameters\": [{\"name\": \"state\", \"in\": \"query\", \"schema\": {\"type\": \"string\", \"enum\": [\"ready\", \"pending\"]}}], \"request_body\": null, \"responses\": {\"200\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "GET",
+            "path": "/states"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "GET",
+                    "path": "/states",
+                    "summary": "endpoint 6",
+                    "parameters": [
+                      {
+                        "name": "state",
+                        "in": "query",
+                        "schema": {
+                          "type": "string",
+                          "enum": [
+                            "ready",
+                            "pending"
+                          ]
+                        }
+                      }
+                    ],
+                    "request_body": null,
+                    "responses": {
+                      "200": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/states"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-06",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for GET /states with documented status 200; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/states",
+          "summary": "endpoint 6",
+          "parameters": [
+            {
+              "name": "state",
+              "in": "query",
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "pending"
+                ]
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/states"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-06",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/states",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 200",
+                    "expected_basis": "responses.200",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 200
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/states"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/states"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 200
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-06",
+      "role": "test_planner",
+      "prompt": "Read endpoint details and the declared business rule for GET /states. Standard schema and status coverage is already generated; it does not check the conditional segment mapping. Plan exactly one additional business scenario for the declared conditional rule, preserve its rule_id, and do not repeat generic happy_path coverage.",
+      "tools": [
+        "get_endpoint_detail",
+        "get_business_rule_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/states",
+          "summary": "endpoint 6",
+          "parameters": [
+            {
+              "name": "state",
+              "in": "query",
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "ready",
+                  "pending"
+                ]
+              }
+            },
+            {
+              "name": "X-Eval-Segment",
+              "in": "header",
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "segment6"
+                ]
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "segment"
+                    ],
+                    "properties": {
+                      "segment": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "business_rules": [
+            {
+              "rule_id": "segment-06",
+              "title": "Conditional business result for segment6",
+              "source_text": "When X-Eval-Segment is segment6, a successful response has JSON segment equal to segment6. This conditional mapping is a business requirement, not a fixed response-schema value.",
+              "testable": true,
+              "runnable": true,
+              "trigger": {
+                "request_overrides": {
+                  "headers": {
+                    "X-Eval-Segment": "segment6"
+                  }
+                },
+                "omit_fields": [],
+                "chain_steps": []
+              },
+              "expected": {
+                "status": 200,
+                "basis": "responses.200",
+                "assertions": [
+                  {
+                    "type": "status_code",
+                    "operator": "eq",
+                    "expected": 200
+                  },
+                  {
+                    "type": "json_path",
+                    "target": "$.segment",
+                    "operator": "eq",
+                    "expected": "segment6"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/states"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "get_business_rule_detail",
+              "arguments": {
+                "rule_id": "segment-06"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": [
+                  {
+                    "scenario_id": "SCN-PLAN-06",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/states",
+                    "design_method": "equivalence_class",
+                    "priority": "P1",
+                    "title_hint": "Business mapping for segment6",
+                    "expected_basis": "responses.200",
+                    "coverage_tags": [
+                      "business_rule"
+                    ],
+                    "rule_ids": [
+                      "segment-06"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/states"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_ids": {
+                "type": "array",
+                "contains": {
+                  "const": "segment-06"
+                }
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis",
+              "rule_ids"
+            ]
+          }
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "discovery-07",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint POST /amounts; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"POST\", \"path\": \"/amounts\", \"summary\": \"endpoint 7\", \"parameters\": [], \"request_body\": {\"content\": {\"application/json\": {\"schema\": {\"type\": \"object\", \"properties\": {\"amount\": {\"type\": \"number\", \"minimum\": 0.5, \"maximum\": 100, \"multipleOf\": 0.5}}}}}}, \"responses\": {\"201\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "POST",
+            "path": "/amounts"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "POST",
+                    "path": "/amounts",
+                    "summary": "endpoint 7",
+                    "parameters": [],
+                    "request_body": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "amount": {
+                                "type": "number",
+                                "minimum": 0.5,
+                                "maximum": 100,
+                                "multipleOf": 0.5
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {
+                      "201": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/amounts"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-07",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for POST /amounts with documented status 201; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/amounts",
+          "summary": "endpoint 7",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number",
+                      "minimum": 0.5,
+                      "maximum": 100,
+                      "multipleOf": 0.5
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/amounts"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-07",
+                    "endpoint_method": "POST",
+                    "endpoint_path": "/amounts",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 201",
+                    "expected_basis": "responses.201",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 201
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "POST"
+              },
+              "endpoint_path": {
+                "const": "/amounts"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/amounts"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 201
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-07",
+      "role": "test_planner",
+      "prompt": "Read endpoint details for POST /amounts. Standard happy_path, optional/type/boundary/status-code coverage is already generated. Identify additional business semantics only; submit an empty plan if the trusted endpoint declares none. Standard cases already cover every declared schema constraint, including enums, multipleOf, min/max lengths, nested fields and array sizes. No additional error status or business behavior is documented.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/amounts",
+          "summary": "endpoint 7",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number",
+                      "minimum": 0.5,
+                      "maximum": 100,
+                      "multipleOf": 0.5
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/amounts"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "discovery-08",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint POST /tags; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"POST\", \"path\": \"/tags\", \"summary\": \"endpoint 8\", \"parameters\": [], \"request_body\": {\"content\": {\"application/json\": {\"schema\": {\"type\": \"array\", \"minItems\": 1, \"maxItems\": 3, \"items\": {\"type\": \"string\", \"minLength\": 1}}}}}, \"responses\": {\"200\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "POST",
+            "path": "/tags"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "POST",
+                    "path": "/tags",
+                    "summary": "endpoint 8",
+                    "parameters": [],
+                    "request_body": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 3,
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {
+                      "200": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/tags"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-08",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for POST /tags with documented status 200; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/tags",
+          "summary": "endpoint 8",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/tags"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-08",
+                    "endpoint_method": "POST",
+                    "endpoint_path": "/tags",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 200",
+                    "expected_basis": "responses.200",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 200
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "POST"
+              },
+              "endpoint_path": {
+                "const": "/tags"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/tags"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 200
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-08",
+      "role": "test_planner",
+      "prompt": "Read endpoint details and the declared business rule for POST /tags. Standard schema and status coverage is already generated; it does not check the conditional segment mapping. Plan exactly one additional business scenario for the declared conditional rule, preserve its rule_id, and do not repeat generic happy_path coverage.",
+      "tools": [
+        "get_endpoint_detail",
+        "get_business_rule_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/tags",
+          "summary": "endpoint 8",
+          "parameters": [
+            {
+              "name": "X-Eval-Segment",
+              "in": "header",
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "segment8"
+                ]
+              }
+            }
+          ],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "documented success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "segment"
+                    ],
+                    "properties": {
+                      "segment": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "business_rules": [
+            {
+              "rule_id": "segment-08",
+              "title": "Conditional business result for segment8",
+              "source_text": "When X-Eval-Segment is segment8, a successful response has JSON segment equal to segment8. This conditional mapping is a business requirement, not a fixed response-schema value.",
+              "testable": true,
+              "runnable": true,
+              "trigger": {
+                "request_overrides": {
+                  "headers": {
+                    "X-Eval-Segment": "segment8"
+                  }
+                },
+                "omit_fields": [],
+                "chain_steps": []
+              },
+              "expected": {
+                "status": 200,
+                "basis": "responses.200",
+                "assertions": [
+                  {
+                    "type": "status_code",
+                    "operator": "eq",
+                    "expected": 200
+                  },
+                  {
+                    "type": "json_path",
+                    "target": "$.segment",
+                    "operator": "eq",
+                    "expected": "segment8"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/tags"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "get_business_rule_detail",
+              "arguments": {
+                "rule_id": "segment-08"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": [
+                  {
+                    "scenario_id": "SCN-PLAN-08",
+                    "endpoint_method": "POST",
+                    "endpoint_path": "/tags",
+                    "design_method": "equivalence_class",
+                    "priority": "P1",
+                    "title_hint": "Business mapping for segment8",
+                    "expected_basis": "responses.200",
+                    "coverage_tags": [
+                      "business_rule"
+                    ],
+                    "rule_ids": [
+                      "segment-08"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "POST"
+              },
+              "endpoint_path": {
+                "const": "/tags"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_ids": {
+                "type": "array",
+                "contains": {
+                  "const": "segment-08"
+                }
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis",
+              "rule_ids"
+            ]
+          }
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "discovery-09",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint GET /optional; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"GET\", \"path\": \"/optional\", \"summary\": \"endpoint 9\", \"parameters\": [{\"name\": \"X-Mode\", \"in\": \"header\", \"schema\": {\"type\": \"string\"}}], \"request_body\": null, \"responses\": {\"200\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "GET",
+            "path": "/optional"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "GET",
+                    "path": "/optional",
+                    "summary": "endpoint 9",
+                    "parameters": [
+                      {
+                        "name": "X-Mode",
+                        "in": "header",
+                        "schema": {
+                          "type": "string"
+                        }
+                      }
+                    ],
+                    "request_body": null,
+                    "responses": {
+                      "200": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/optional"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-09",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for GET /optional with documented status 200; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/optional",
+          "summary": "endpoint 9",
+          "parameters": [
+            {
+              "name": "X-Mode",
+              "in": "header",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/optional"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-09",
+                    "endpoint_method": "GET",
+                    "endpoint_path": "/optional",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 200",
+                    "expected_basis": "responses.200",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 200
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "GET"
+              },
+              "endpoint_path": {
+                "const": "/optional"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "GET"
+              },
+              "path": {
+                "const": "/optional"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 200
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-09",
+      "role": "test_planner",
+      "prompt": "Read endpoint details for GET /optional. Standard happy_path, optional/type/boundary/status-code coverage is already generated. Identify additional business semantics only; submit an empty plan if the trusted endpoint declares none. Standard cases already cover every declared schema constraint, including enums, multipleOf, min/max lengths, nested fields and array sizes. No additional error status or business behavior is documented.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/optional",
+          "summary": "endpoint 9",
+          "parameters": [
+            {
+              "name": "X-Mode",
+              "in": "header",
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "request_body": null,
+          "responses": {
+            "200": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "GET",
+                "path": "/optional"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 2
+      }
+    },
+    {
+      "id": "discovery-10",
+      "role": "api_analyst",
+      "prompt": "Read the complete source document and submit exactly the documented endpoint POST /nested; preserve its parameters and responses.",
+      "tools": [
+        "get_document_info",
+        "read_document_chunk",
+        "submit_endpoint_drafts"
+      ],
+      "state": {
+        "document_text": "{\"method\": \"POST\", \"path\": \"/nested\", \"summary\": \"endpoint 10\", \"parameters\": [], \"request_body\": {\"content\": {\"application/json\": {\"schema\": {\"type\": \"object\", \"properties\": {\"profile\": {\"type\": \"object\", \"properties\": {\"age\": {\"type\": \"integer\", \"minimum\": 18, \"maximum\": 65}}}}}}}}, \"responses\": {\"201\": {\"description\": \"documented success\"}}}",
+        "expected_endpoint_keys": [
+          {
+            "method": "POST",
+            "path": "/nested"
+          }
+        ]
+      },
+      "endpoints": [],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_document_info",
+              "arguments": {}
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "read_document_chunk",
+              "arguments": {
+                "offset": 0,
+                "max_chars": 16000
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_endpoint_drafts",
+              "arguments": {
+                "endpoints": [
+                  {
+                    "method": "POST",
+                    "path": "/nested",
+                    "summary": "endpoint 10",
+                    "parameters": [],
+                    "request_body": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "profile": {
+                                "type": "object",
+                                "properties": {
+                                  "age": {
+                                    "type": "integer",
+                                    "minimum": 18,
+                                    "maximum": 65
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "responses": {
+                      "201": {
+                        "description": "documented success"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/nested"
+              }
+            },
+            "required": [
+              "method",
+              "path"
+            ]
+          }
+        },
+        "required_tools": [
+          "read_document_chunk",
+          "submit_endpoint_drafts"
+        ],
+        "max_tool_calls": 3
+      }
+    },
+    {
+      "id": "designer-10",
+      "role": "case_designer",
+      "prompt": "Design one happy_path scenario for POST /nested with documented status 201; look up the endpoint first.",
+      "tools": [
+        "get_endpoint_detail",
+        "submit_case_drafts"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/nested",
+          "summary": "endpoint 10",
+          "parameters": [],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "profile": {
+                      "type": "object",
+                      "properties": {
+                        "age": {
+                          "type": "integer",
+                          "minimum": 18,
+                          "maximum": 65
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "documented success"
+            }
+          }
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/nested"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_case_drafts",
+              "arguments": {
+                "drafts": [
+                  {
+                    "scenario_id": "SCN-10",
+                    "endpoint_method": "POST",
+                    "endpoint_path": "/nested",
+                    "intent": "Documented successful request",
+                    "design_method": "happy_path",
+                    "expected_outcome": "Return documented status 201",
+                    "expected_basis": "responses.201",
+                    "assertions": [
+                      {
+                        "type": "status_code",
+                        "expected": 201
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "POST"
+              },
+              "endpoint_path": {
+                "const": "/nested"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis"
+            ]
+          }
+        },
+        "gate": "compile_cases",
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_case_drafts"
+        ],
+        "max_tool_calls": 2,
+        "compiled_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "const": "POST"
+              },
+              "path": {
+                "const": "/nested"
+              },
+              "assertions": {
+                "type": "array",
+                "contains": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "status_code"
+                    },
+                    "operator": {
+                      "const": "eq"
+                    },
+                    "expected": {
+                      "const": 201
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "expected"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "assertions"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "planner-10",
+      "role": "test_planner",
+      "prompt": "Read endpoint details and the declared business rule for POST /nested. Standard schema and status coverage is already generated; it does not check the conditional segment mapping. Plan exactly one additional business scenario for the declared conditional rule, preserve its rule_id, and do not repeat generic happy_path coverage.",
+      "tools": [
+        "get_endpoint_detail",
+        "get_business_rule_detail",
+        "submit_coverage_plan"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/nested",
+          "summary": "endpoint 10",
+          "parameters": [
+            {
+              "name": "X-Eval-Segment",
+              "in": "header",
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "standard",
+                  "segment10"
+                ]
+              }
+            }
+          ],
+          "request_body": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "profile": {
+                      "type": "object",
+                      "properties": {
+                        "age": {
+                          "type": "integer",
+                          "minimum": 18,
+                          "maximum": 65
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "201": {
+              "description": "documented success",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "required": [
+                      "segment"
+                    ],
+                    "properties": {
+                      "segment": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "business_rules": [
+            {
+              "rule_id": "segment-10",
+              "title": "Conditional business result for segment10",
+              "source_text": "When X-Eval-Segment is segment10, a successful response has JSON segment equal to segment10. This conditional mapping is a business requirement, not a fixed response-schema value.",
+              "testable": true,
+              "runnable": true,
+              "trigger": {
+                "request_overrides": {
+                  "headers": {
+                    "X-Eval-Segment": "segment10"
+                  }
+                },
+                "omit_fields": [],
+                "chain_steps": []
+              },
+              "expected": {
+                "status": 201,
+                "basis": "responses.201",
+                "assertions": [
+                  {
+                    "type": "status_code",
+                    "operator": "eq",
+                    "expected": 201
+                  },
+                  {
+                    "type": "json_path",
+                    "target": "$.segment",
+                    "operator": "eq",
+                    "expected": "segment10"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "tool_calls": [
+            {
+              "name": "get_endpoint_detail",
+              "arguments": {
+                "method": "POST",
+                "path": "/nested"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "get_business_rule_detail",
+              "arguments": {
+                "rule_id": "segment-10"
+              }
+            }
+          ]
+        },
+        {
+          "tool_calls": [
+            {
+              "name": "submit_coverage_plan",
+              "arguments": {
+                "items": [
+                  {
+                    "scenario_id": "SCN-PLAN-10",
+                    "endpoint_method": "POST",
+                    "endpoint_path": "/nested",
+                    "design_method": "equivalence_class",
+                    "priority": "P1",
+                    "title_hint": "Business mapping for segment10",
+                    "expected_basis": "responses.201",
+                    "coverage_tags": [
+                      "business_rule"
+                    ],
+                    "rule_ids": [
+                      "segment-10"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "artifact_schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "endpoint_method": {
+                "const": "POST"
+              },
+              "endpoint_path": {
+                "const": "/nested"
+              },
+              "expected_basis": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rule_ids": {
+                "type": "array",
+                "contains": {
+                  "const": "segment-10"
+                }
+              }
+            },
+            "required": [
+              "endpoint_method",
+              "endpoint_path",
+              "expected_basis",
+              "rule_ids"
+            ]
+          }
+        },
+        "required_tools": [
+          "get_endpoint_detail",
+          "submit_coverage_plan"
+        ],
+        "max_tool_calls": 3
+      }
+    }
+  ]
+}

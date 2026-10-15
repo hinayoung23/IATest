@@ -48,7 +48,7 @@ ALLOWED_ASSERTION_OPERATORS = {
     "sorted_desc_by", "sorted_asc_by", "starts_with", "ends_with", "matches", "regex",
     "gte_path", "lte_path", "gt_path", "lt_path", "approx_eq",
 }
-BUILTIN_TEMPLATE_VARIABLES = {"timestamp", "uuid", "random", "base_url"}
+BUILTIN_TEMPLATE_VARIABLES = {"timestamp", "uuid", "random", "base_url", "iatest_namespace"}
 
 
 @dataclass(slots=True)
@@ -74,6 +74,9 @@ class ScenarioDraft:
     rule_ids: list[str] = field(default_factory=list)
     coverage_partition_ids: list[str] = field(default_factory=list)
     fixture_requirements: list[str] = field(default_factory=list)
+    variables: dict[str, Any] = field(default_factory=dict)
+    data_generation: dict[str, Any] = field(default_factory=dict)
+    samples: int = 1
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ScenarioDraft:
@@ -92,6 +95,8 @@ class ScenarioDraft:
             request_overrides = data.get("request") or {}
         if not isinstance(request_overrides, dict):
             raise ValueError("request_overrides 必须是对象")
+        if not isinstance(data.get("variables", {}), dict) or not isinstance(data.get("data_generation", {}), dict) or type(data.get("samples", 1)) is not int or not 1 <= data.get("samples", 1) <= 10000:
+            raise ValueError("运行时变量、生成规则或样本数非法")
         design_method = normalize_design_method(data.get("design_method") or "happy_path")
         assertions = dict_items(data.get("assertions"))
         chain_steps = normalize_chain_step_sequence(dict_items(data.get("chain_steps") or data.get("steps")))
@@ -123,11 +128,17 @@ class ScenarioDraft:
             rule_ids=string_items(data.get("rule_ids")),
             coverage_partition_ids=string_items(data.get("coverage_partition_ids")),
             fixture_requirements=string_items(data.get("fixture_requirements")),
+            variables=data.get("variables", {}),
+            data_generation=data.get("data_generation", {}),
+            samples=data.get("samples", 1),
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "scenario_id": self.scenario_id,
+            "variables": copy.deepcopy(self.variables),
+            "data_generation": copy.deepcopy(self.data_generation),
+            "samples": self.samples,
             "endpoint_method": self.endpoint_method,
             "endpoint_path": self.endpoint_path,
             "intent": self.intent,
@@ -433,6 +444,9 @@ def compile_endpoint_draft(
     case.rule_ids = list(draft.rule_ids)
     case.coverage_partition_ids = list(draft.coverage_partition_ids)
     case.fixture_requirements = list(draft.fixture_requirements)
+    case.variables = copy.deepcopy(draft.variables)
+    case.data_generation = copy.deepcopy(draft.data_generation)
+    case.samples = draft.samples
     return normalize_test_case(
         case,
         module=module_name(endpoint),
@@ -563,6 +577,9 @@ def compile_chain_draft(
         rule_ids=list(draft.rule_ids),
         coverage_partition_ids=list(draft.coverage_partition_ids),
         fixture_requirements=list(draft.fixture_requirements),
+        variables=copy.deepcopy(draft.variables),
+        data_generation=copy.deepcopy(draft.data_generation),
+        samples=draft.samples,
     )
     return normalize_test_case(case, module="CHAIN", index=counters["chain"], source_tag="agent_compiled"), issues
 
@@ -899,6 +916,8 @@ def complete_expected_response_assertions(
         if not mentions_response_field(semantic_text, field_name):
             continue
         explicit, expected = expected_field_value(semantic_text, field_name)
+        if schema_assertion_covers_field(result, field_name, explicit=explicit, expected=expected):
+            continue
         if explicit:
             operator = "is_null" if expected is None else "eq"
             assertion_expected = True if expected is None else expected
@@ -1591,6 +1610,9 @@ def validate_final_assertions(
         if not mentions_response_field(semantic_text, str(response_field)):
             continue
         target = f"$.{response_field}"
+        explicit, expected = expected_field_value(semantic_text, str(response_field))
+        if schema_assertion_covers_field(assertions, str(response_field), explicit=explicit, expected=expected):
+            continue
         matching = [item for item in assertions if item.type == "json_path" and item.target == target]
         textual = [
             item
@@ -1607,7 +1629,6 @@ def validate_final_assertions(
                 )
             )
             continue
-        explicit, expected = expected_field_value(semantic_text, str(response_field))
         if explicit and not textual:
             operator = "is_null" if expected is None else "eq"
             assertion_expected = True if expected is None else expected
@@ -1731,7 +1752,7 @@ def validate_case_variables(
     endpoint: Endpoint,
     endpoint_by_key: dict[tuple[str, str], Endpoint],
 ) -> list[DraftIssue]:
-    available = set(BUILTIN_TEMPLATE_VARIABLES) | set(case.variables)
+    available = set(BUILTIN_TEMPLATE_VARIABLES) | set(case.variables) | set(case.data_generation)
     if case.dataset is not None:
         available.update(template_variables([case.headers, case.path_params, case.query, case.body]))
     for step in case.setup_steps:
@@ -1752,7 +1773,7 @@ def validate_step_variables(
     case: TestCase,
     endpoint_by_key: dict[tuple[str, str], Endpoint],
 ) -> list[DraftIssue]:
-    available = set(BUILTIN_TEMPLATE_VARIABLES) | set(case.variables)
+    available = set(BUILTIN_TEMPLATE_VARIABLES) | set(case.variables) | set(case.data_generation)
     if case.dataset is not None:
         available.update(template_variables([step.headers, step.path_params, step.query, step.body] for step in case.steps))
     issues: list[DraftIssue] = []
@@ -1909,6 +1930,32 @@ def response_schema_for_assertions(endpoint: Endpoint, assertions: list[Assertio
     content = response.get("content") if isinstance(response.get("content"), dict) else {}
     schemas.extend(media.get("schema") for media in content.values() if isinstance(media, dict))
     return next((schema for schema in schemas if isinstance(schema, dict)), {})
+
+
+def schema_assertion_covers_field(assertions: list[Assertion], field_name: str, *, explicit: bool, expected: Any) -> bool:
+    """Prove a root property is required, and its exact value when claimed.
+
+    Only simple schemas using the framework's default dialect are handled here.
+    References, other dialects and optional properties retain the existing gate.
+    """
+    for assertion in assertions:
+        schema = assertion.expected
+        if assertion.type != "json_schema" or not isinstance(schema, dict):
+            continue
+        if schema.get("type") != "object" or "$ref" in schema or "$schema" in schema:
+            continue
+        if field_name not in (schema.get("required") or []):
+            continue
+        properties = schema.get("properties")
+        field_schema = properties.get(field_name) if isinstance(properties, dict) else None
+        if not isinstance(field_schema, dict) or "$ref" in field_schema:
+            continue
+        if not explicit:
+            return True
+        values = [field_schema["const"]] if "const" in field_schema else field_schema.get("enum", [])
+        if isinstance(values, list) and len(values) == 1 and json.dumps(values[0], sort_keys=True) == json.dumps(expected, sort_keys=True):
+            return True
+    return False
 
 
 def json_path_exists_in_schema(path: str, schema: dict[str, Any]) -> bool:

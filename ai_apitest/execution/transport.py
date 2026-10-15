@@ -29,9 +29,14 @@ def client_options(environment: dict[str, Any], timeout: float) -> dict[str, Any
         else:
             verify.load_cert_chain(tls_path(str(cert)))
     result = {"timeout": timeout, "verify": verify, "trust_env": bool(environment.get("trust_env", True)), "follow_redirects": bool(environment.get("follow_redirects", False))}
+    def request_control(request):
+        from ai_apitest.execution.control import ACTIVE_RUNTIME
+        if runtime := ACTIVE_RUNTIME.get():
+            runtime.control.request()
+    result["event_hooks"] = {"request": [request_control]}
     if policy and policy.mode != "off":
         result["trust_env"] = False
-        result["event_hooks"] = {"request": [policy.request_hook]}
+        result["event_hooks"]["request"].insert(0, policy.request_hook)
     if environment.get("proxy"):
         result["proxy"] = environment["proxy"]
     if environment.get("cookies"):

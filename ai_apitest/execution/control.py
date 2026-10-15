@@ -22,18 +22,41 @@ class RunControl:
     cancelled: threading.Event = field(default_factory=threading.Event)
     cancellation_check: Callable[[], bool] | None = None
     started: float = field(default_factory=time.monotonic)
+    max_requests: int | None = None
+    request_parent: Any = None
+    requests_started: int = 0
+    request_exhausted: bool = False
+    request_lock: Any = field(default_factory=threading.Lock)
 
     def __post_init__(self):
+        if self.max_requests is not None and (type(self.max_requests) is not int or self.max_requests < 1):
+            raise ValueError("请求预算必须为正整数")
         if self.timeout_seconds is not None and (not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0):
             raise ValueError("总时限必须是大于 0 的有限数值")
 
     def reason(self) -> str:
+        if self.request_exhausted or (self.request_parent and self.request_parent.request_exhausted):
+            return "请求预算耗尽"
         if self.cancelled.is_set() or (self.cancellation_check is not None and self.cancellation_check()):
             self.cancelled.set()
             return "执行已取消"
         if self.timeout_seconds is not None and time.monotonic() - self.started >= self.timeout_seconds:
             return "执行超过总时限"
         return ""
+
+    def request(self):
+        self.check()
+        if self.request_parent:
+            self.request_parent.request()
+            return
+        with self.request_lock:
+            if self.max_requests is not None and self.requests_started >= self.max_requests:
+                self.request_exhausted = True
+                raise RunCancelled("请求预算耗尽")
+            self.requests_started += 1
+
+    def request_count(self):
+        return self.request_parent.request_count() if self.request_parent else self.requests_started
 
     def check(self) -> None:
         if reason := self.reason():

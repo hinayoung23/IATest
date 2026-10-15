@@ -2,6 +2,8 @@
 
 数据集、variables、identity、poll、resources、parallel_safe、retry_safe、json_schema 和 response_time 的完整配置与示例见[框架补充与使用说明](framework-improvements.md)。这些字段在 Markdown 的 `iatest-cases-json` 对象中保存；数据集行 ID 只在执行时展开。
 
+本地源码新增 `data_generation`（声明生成变量）和 `samples`（每条用例样本数，默认 1），详见[运行时数据与 Agent 能力深化](agent-data-evolution.md)。每个样本生成一次，通过 `{{name}}` 注入请求与断言；显式 variables/数据集行值优先。`sample_index`、`sample_origin_id`、`sample_plan` 为运行时内部字段，不需写入源用例。
+
 ## 用例编号 id
 
 统一格式：`TC-模块-四位起步序号`

@@ -1,4 +1,6 @@
 from __future__ import annotations
+from ai_apitest.agents.policy import bounded_task
+from ai_apitest.agents.recipes import RecipeCatalog
 
 from pathlib import Path
 from typing import Any, Callable
@@ -196,6 +198,7 @@ def strategy_applicability(endpoints: list[Endpoint]) -> dict[str, dict[str, obj
     }
 
 
+@bounded_task
 def apply_ai_discovery_if_configured(
     root: Path,
     text: str,
@@ -522,6 +525,7 @@ def merge_discovered_endpoint(deterministic: Endpoint, ai: Endpoint | None) -> E
     return merge_endpoint_contract(deterministic, ai)
 
 
+@bounded_task
 def generate_cases_with_config(
     root: Path,
     endpoints: list[Endpoint],
@@ -1281,6 +1285,9 @@ def case_generation_fingerprint(
         "designer_batch_scenarios",
         "semantic_repair_attempts",
         "history_max_chars",
+        "model_routing",
+        "recipes",
+        "token_optimization",
     }
     payload = {
         "pipeline_version": GENERATION_PIPELINE_VERSION,
@@ -1303,6 +1310,7 @@ def case_generation_fingerprint(
         "llm": {key: value for key, value in llm.items() if "key" not in key.lower()},
         "lessons": lesson_version,
         "roles": role_versions,
+        "recipe_catalog": RecipeCatalog(root, project, config).list(),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
     if scoped:
@@ -2711,6 +2719,7 @@ def build_ai_report_analysis(
         return f"大模型分析失败：{exc}"
 
 
+@bounded_task
 def build_ai_report_bundle(
     root: Path,
     project: str,

@@ -19,6 +19,15 @@ def fingerprint(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
+def recipe_fingerprint(case: TestCase) -> str:
+    value = asdict(case)
+    value["id"] = case.sample_origin_id or case.id
+    value["sample_index"] = 0
+    value["sample_origin_id"] = ""
+    value["sample_plan"] = {}
+    return fingerprint(value)
+
+
 def run_metadata(root: Path, project: str, environment: dict, cases: list[TestCase], options: RunOptions, seed: str | int, config: dict | None = None) -> dict:
     try:
         framework_version = version("iatest-framework")
@@ -40,7 +49,7 @@ def run_metadata(root: Path, project: str, environment: dict, cases: list[TestCa
         "base_url": environment.get("base_url", ""), "git_revision": revision,
         "contract_hash": fingerprint(read_json(project_docs_file(root, project), [])),
         "cases_hash": fingerprint([asdict(case) for case in cases]),
-        "case_hashes": [{"case_id": case.id, "origin_case_id": case.origin_case_id or case.id, "hash": fingerprint(asdict(case))} for case in cases],
+        "case_hashes": [{"case_id": case.id, "recipe_id": case.sample_origin_id or case.id, "origin_case_id": case.origin_case_id or case.id, "hash": recipe_fingerprint(case)} for case in cases],
         "dataset_hash": fingerprint([{ "id": case.id, "variables": case.variables} for case in cases]),
         "fixture_hash": fingerprint((config or {}).get("fixtures", {})),
         "seed": seed, "options": {key: sorted(value) if isinstance(value, set) else value for key, value in asdict(options).items()}, "case_ids": [case.id for case in cases],

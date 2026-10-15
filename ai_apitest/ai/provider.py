@@ -5,11 +5,26 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 from typing import Any, Callable
 
 import httpx
 
 DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 180
+MODEL_HTTP_ATTEMPTS = ContextVar("iatest_model_http_attempts", default=0)
+
+
+def usage_count(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (ValueError, TypeError, OverflowError):
+        return 0
+
+
+def check_task_deadline() -> None:
+    from ai_apitest.agents.policy import ACTIVE_TASK_BUDGET
+    if budget := ACTIVE_TASK_BUDGET.get():
+        budget.check()
 
 
 @dataclass(slots=True)
@@ -17,25 +32,43 @@ class TokenUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+    estimated: bool = False
+    raw_usage: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_openai(cls, value: dict[str, Any] | None) -> "TokenUsage":
-        value = value or {}
-        input_tokens = int(value.get("prompt_tokens") or value.get("input_tokens") or 0)
-        output_tokens = int(value.get("completion_tokens") or value.get("output_tokens") or 0)
-        return cls(input_tokens, output_tokens, int(value.get("total_tokens") or input_tokens + output_tokens))
+        value = dict(value) if isinstance(value, dict) else {}
+        input_tokens = usage_count(value.get("prompt_tokens") or value.get("input_tokens"))
+        output_tokens = usage_count(value.get("completion_tokens") or value.get("output_tokens"))
+        details = value.get("prompt_tokens_details") or value.get("input_tokens_details") or {}
+        output_details = value.get("completion_tokens_details") or value.get("output_tokens_details") or {}
+        details = details if isinstance(details, dict) else {}
+        output_details = output_details if isinstance(output_details, dict) else {}
+        return cls(input_tokens, output_tokens, usage_count(value.get("total_tokens")) or input_tokens + output_tokens, usage_count(details.get("cached_tokens") or value.get("cache_read_input_tokens")), usage_count(details.get("cache_write_tokens") or value.get("cache_creation_input_tokens")), usage_count(output_details.get("reasoning_tokens")), raw_usage=value)
 
     @classmethod
     def from_anthropic(cls, value: dict[str, Any] | None) -> "TokenUsage":
-        value = value or {}
-        input_tokens = int(value.get("input_tokens") or 0)
-        output_tokens = int(value.get("output_tokens") or 0)
-        return cls(input_tokens, output_tokens, input_tokens + output_tokens)
+        value = dict(value) if isinstance(value, dict) else {}
+        input_tokens = usage_count(value.get("input_tokens"))
+        output_tokens = usage_count(value.get("output_tokens"))
+        cached = usage_count(value.get("cache_read_input_tokens"))
+        written = usage_count(value.get("cache_creation_input_tokens"))
+        # Messages input_tokens excludes cache reads/writes; input_tokens here
+        # always means the complete context, with the subsets recorded separately.
+        input_tokens += cached + written
+        return cls(input_tokens, output_tokens, input_tokens + output_tokens, cached, written, usage_count(value.get("reasoning_tokens")), raw_usage=value)
 
     def add(self, other: "TokenUsage") -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.total_tokens += other.total_tokens
+        self.cached_input_tokens += other.cached_input_tokens
+        self.cache_write_tokens += other.cache_write_tokens
+        self.reasoning_tokens += other.reasoning_tokens
+        self.estimated = self.estimated or other.estimated
 
 
 @dataclass(slots=True)
@@ -184,6 +217,7 @@ def openai_compatible_model_completion(
     try:
         if stream_callback:
             with httpx.Client(timeout=timeout) as client:
+                MODEL_HTTP_ATTEMPTS.set(MODEL_HTTP_ATTEMPTS.get() + 1)
                 with client.stream("POST", endpoint, json=request_body, headers=headers) as response:
                     response.raise_for_status()
                     return read_openai_model_stream(response.iter_lines(), stream_callback)
@@ -268,6 +302,7 @@ def read_openai_model_stream(response, stream_callback: Callable[[str], None]) -
     finish_reason = ""
     stream_callback("已连接到大模型服务，正在等待模型返回内容...\n")
     for raw_line in response:
+        check_task_deadline()
         line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
         if not line or line.startswith(":"):
             continue
@@ -315,10 +350,12 @@ def post_anthropic_model_stream(
     finish_reason = ""
     try:
         with httpx.Client(timeout=timeout) as client:
+            MODEL_HTTP_ATTEMPTS.set(MODEL_HTTP_ATTEMPTS.get() + 1)
             with client.stream("POST", endpoint, json=payload, headers=headers) as response:
                 response.raise_for_status()
                 stream_callback("已连接到大模型服务，正在等待模型返回内容...\n")
                 for raw_line in response.iter_lines():
+                    check_task_deadline()
                     line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
                     if not line or not line.startswith("data:"):
                         continue
@@ -359,6 +396,7 @@ def post_anthropic_model_stream(
                         if output_tokens:
                             usage.output_tokens = output_tokens
                             usage.total_tokens = usage.input_tokens + output_tokens
+                            usage.raw_usage.update(data.get("usage") or {})
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(http_status_error_message(exc)) from exc
     except httpx.TimeoutException as exc:
@@ -518,6 +556,7 @@ def openai_compatible_chat_completion(
     try:
         if stream_callback:
             with httpx.Client(timeout=timeout) as client:
+                MODEL_HTTP_ATTEMPTS.set(MODEL_HTTP_ATTEMPTS.get() + 1)
                 with client.stream("POST", endpoint, json=request_body, headers=headers) as response:
                     response.raise_for_status()
                     return read_openai_stream(response.iter_lines(), stream_callback)
@@ -585,6 +624,7 @@ def read_openai_stream(response, stream_callback: Callable[[str], None]) -> str:
     parts: list[str] = []
     stream_callback("已连接到大模型服务，正在等待模型返回内容...\n")
     for raw_line in response:
+        check_task_deadline()
         line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
         if not line or line.startswith(":"):
             continue
@@ -618,10 +658,12 @@ def post_anthropic_stream(
     parts: list[str] = []
     try:
         with httpx.Client(timeout=timeout) as client:
+            MODEL_HTTP_ATTEMPTS.set(MODEL_HTTP_ATTEMPTS.get() + 1)
             with client.stream("POST", endpoint, json=payload, headers=headers) as response:
                 response.raise_for_status()
                 stream_callback("已连接到大模型服务，正在等待模型返回内容...\n")
                 for raw_line in response.iter_lines():
+                    check_task_deadline()
                     line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
                     if not line or not line.startswith("data:"):
                         continue
@@ -650,7 +692,9 @@ def post_json(endpoint: str, payload: dict[str, Any], headers: dict[str, str], t
     last_error: Exception | None = None
     with httpx.Client(timeout=timeout) as client:
         for attempt in range(3):
+            check_task_deadline()
             try:
+                MODEL_HTTP_ATTEMPTS.set(MODEL_HTTP_ATTEMPTS.get() + 1)
                 response = client.post(endpoint, json=payload, headers=headers)
                 response.raise_for_status()
                 try:

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ai_apitest.agents.policy import bounded_task
 
 import json
 from pathlib import Path
@@ -16,6 +17,7 @@ from ai_apitest.tools.registry import ToolRegistry
 GatewayFactory = Callable[[dict[str, Any]], ModelGatewayProtocol]
 
 
+@bounded_task
 def review_quality_with_agent_runtime(
     root: Path,
     project: str,
@@ -43,6 +45,8 @@ def review_quality_with_agent_runtime(
             f"执行 {review_type} 独立质量审计。先调用 get_audit_artifact_info，再连续调用 "
             "read_audit_artifact_chunk，直到 has_more=false。不要推测产出模型身份。"
             "证据包已包含完成审计所需的全部事实，读完后不要尝试其它证据工具，必须直接提交裁决。"
+            "如果框架已经预取完整事实，直接审计并提交。iatest-facts/1 中的 $iatest_fact "
+            "引用对应同包 facts 字典的完整定义，必须展开后检查。"
             "从 reliability、completeness、reasonableness、non_redundancy 四个维度分别给出 0-100 分。"
             "issues 中每个扣分项必须包含 severity、dimension、location、evidence、reason、suggested_fix。"
             "相同根因只保留一个代表问题并列出受影响位置，issues 最多 8 条；"
@@ -89,6 +93,7 @@ def review_quality_with_agent_runtime(
     return {**artifact, "_agent_run_id": result.run_id}
 
 
+@bounded_task
 def govern_context_candidates_with_agent_runtime(
     root: Path,
     project: str,
@@ -145,6 +150,7 @@ def govern_context_candidates_with_agent_runtime(
     return normalized
 
 
+@bounded_task
 def review_conflicts_with_agent_runtime(
     root: Path,
     project: str,

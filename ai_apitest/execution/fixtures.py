@@ -14,7 +14,7 @@ from ai_apitest.execution.plugins import PluginRegistry
 from ai_apitest.execution.control import ACTIVE_RUNTIME, cleanup_control, check_control
 
 
-SUPPORTED_PROVIDER_TYPES = {"static", "http", "plugin"}
+SUPPORTED_PROVIDER_TYPES = {"static", "http", "plugin", "mcp"}
 
 
 @dataclass(slots=True)
@@ -39,7 +39,7 @@ def validate_fixture_providers(value: Any) -> dict[str, dict[str, Any]]:
             raise ValueError(f"外部能力 {name} 的 enabled 必须是布尔值")
         provider_type = str(provider.get("type") or "").strip().lower()
         if provider_type not in SUPPORTED_PROVIDER_TYPES:
-            raise ValueError(f"外部能力 {name} 仅支持 static、http 或 plugin 提供者")
+            raise ValueError(f"外部能力 {name} 仅支持 static、http、plugin 或 mcp 提供者")
         provider["type"] = provider_type
         provider["enabled"] = bool(provider.get("enabled", False))
         if provider_type == "static" and not isinstance(provider.get("values"), dict):
@@ -55,6 +55,14 @@ def validate_fixture_providers(value: Any) -> dict[str, dict[str, Any]]:
                 raise ValueError(f"HTTP 外部能力 {name} 的 cleanup 必须包含 url")
         if provider_type == "plugin" and not str(provider.get("adapter") or "").strip():
             raise ValueError(f"插件外部能力 {name} 必须配置 adapter")
+        if provider_type == "mcp":
+            if not str(provider.get("url", "")).startswith(("http://", "https://")):
+                raise ValueError("MCP 外部能力需要完整 HTTP URL")
+            for action in ("prepare", "cleanup"):
+                if action == "cleanup" and not provider.get(action):
+                    continue
+                if not isinstance(provider.get(action), dict) or not isinstance(provider[action].get("tool"), str) or not provider[action]["tool"]:
+                    raise ValueError("MCP 外部能力需要显式工具名")
         providers[name] = provider
     return providers
 
@@ -73,6 +81,11 @@ def fixture_provider_config(config: dict[str, Any], requirement: str) -> dict[st
     if provider_type == "http":
         prepare = provider.get("prepare")
         if not isinstance(prepare, dict) or not str(prepare.get("url") or "").strip():
+            return None
+    if provider_type == "mcp":
+        try:
+            validate_fixture_providers({requirement: provider})
+        except ValueError:
             return None
     try:
         return resolve_env_vars(provider)
@@ -131,8 +144,12 @@ class FixtureManager:
             if provider is None:
                 steps.append(failed_fixture_step(label, "项目未接入该外部测试能力"))
                 break
-            if provider.get("type") == "plugin":
-                adapter = self.plugins.fixtures.get(provider.get("adapter"))
+            if provider.get("type") in {"plugin", "mcp"}:
+                if provider.get("type") == "mcp":
+                    from ai_apitest.integrations.mcp_client import MCPFixtureAdapter
+                    adapter = MCPFixtureAdapter(provider, self.client, self.timeout_seconds)
+                else:
+                    adapter = self.plugins.fixtures.get(provider.get("adapter"))
                 if adapter is None:
                     steps.append(failed_fixture_step(label, "外部能力适配器未注册"))
                     break
@@ -146,7 +163,7 @@ class FixtureManager:
                         raise ValueError("插件夹具 values 必须是对象")
                     context.update(values)
                     session.injected_values.update(values)
-                    steps.append({"name": label, "provider": "plugin", "status": "passed", "injected_variables": sorted(values), "elapsed_ms": 0, "error": ""})
+                    steps.append({"name": label, "provider": provider["type"], "status": "passed", "injected_variables": sorted(values), "elapsed_ms": 0, "error": ""})
                 except Exception as exc:
                     steps.append(failed_fixture_step(label, str(exc)))
                     break
@@ -181,7 +198,7 @@ class FixtureManager:
             try:
                 with cleanup_control(self.timeout_seconds):
                     adapter.cleanup(state, context, self.client)
-                steps.append({"name": label, "provider": "plugin", "status": "passed", "elapsed_ms": 0, "error": ""})
+                steps.append({"name": label, "provider": getattr(adapter, "provider_type", "plugin"), "status": "passed", "elapsed_ms": 0, "error": ""})
             except Exception as exc:
                 steps.append(failed_fixture_step(label, str(exc)))
         status = "passed" if all(item["status"] in {"passed", "not_needed"} for item in steps) else "failed"

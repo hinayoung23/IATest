@@ -5,6 +5,8 @@ model_role: case_generator
 input_contract: CaseMaintenanceTask
 output_contract: CaseMaintenanceDecision[]
 allowed_tools:
+  - list_test_recipes
+  - read_test_recipe
   - read_task_evidence
   - list_endpoints
   - get_endpoint_detail

@@ -83,6 +83,14 @@ create index if not exists idx_quality_candidates_session
     on quality_artifact_candidates(session_id, round_index);
 create index if not exists idx_quality_scores_candidate
     on quality_audit_scores(candidate_id, judge_key);
+create table if not exists quality_audit_baselines(
+    project text not null,
+    judge_key text not null,
+    artifact_type text not null,
+    payload text not null,
+    updated_at text not null,
+    primary key(project, judge_key, artifact_type)
+);
 """
 
 _SCHEMA_READY: dict[str, int] = {}
@@ -158,10 +166,13 @@ class QualityAuditRepository:
     ) -> str:
         candidate_id = "candidate-" + uuid.uuid4().hex[:20]
         artifact_json = json_text(redact_sensitive(artifact), max_chars=5_000_000)
-        evidence_json = json_text(redact_sensitive(evidence), max_chars=5_000_000)
-        artifact_hash = digest(artifact_json)
-        evidence_hash = digest(evidence_json)
-        audit_input_hash = digest(f"{artifact_hash}\n{evidence_hash}\n{rubric_version}")
+        # Hash originals in memory; persist only their redacted representation.
+        # Two different credentials must not share an audit cache entry merely
+        # because both become the same redaction marker.
+        artifact_hash = digest(json_text(artifact, max_chars=5_000_000))
+        evidence_hash = digest(json_text(evidence, max_chars=5_000_000))
+        gate_hash = digest(json_text(hard_gate_issues or []))
+        audit_input_hash = digest(f"{artifact_hash}\n{evidence_hash}\n{rubric_version}\n{gate_hash}")
         with self.connection() as conn:
             conn.execute(
                 """
@@ -198,12 +209,38 @@ class QualityAuditRepository:
                 join quality_artifact_candidates c on c.id = q.candidate_id
                 join quality_audit_sessions s on s.id = c.session_id
                 where s.project = ? and c.audit_input_hash = ?
+                  and c.hard_gate_pass = 1
                   and q.judge_key = ? and q.status = 'completed'
                 order by q.created_at desc limit 1
                 """,
                 (self.project, str(audit_input_hash), str(judge_key)),
             ).fetchone()
         return decode_row(row) if row else None
+
+    def get_baseline(self, judge_key: str, artifact_type: str) -> dict | None:
+        with self.connection() as conn:
+            row = conn.execute("select payload from quality_audit_baselines where project=? and judge_key=? and artifact_type=?", (self.project, judge_key, artifact_type)).fetchone()
+            try:
+                baseline = json.loads(row[0]) if row else None
+                if not isinstance(baseline, dict):
+                    return None
+                approved = conn.execute("select c.artifact_json from quality_artifact_candidates c join quality_audit_sessions s on s.id=c.session_id join quality_audit_scores q on q.candidate_id=c.id where c.id=? and s.project=? and s.artifact_type=? and c.hard_gate_pass=1 and c.audit_complete=1 and c.passed=1 and q.judge_key=? and q.status='completed' and q.confidence='high' and q.issues_json='[]'", (baseline["candidate_id"], self.project, artifact_type, judge_key)).fetchone()
+                from ai_apitest.agents.token_optimization import canonical
+                if not approved or canonical(json.loads(approved[0])) != canonical(baseline["bundle"]["artifact"]):
+                    return None
+                return baseline
+            except (ValueError, TypeError, KeyError):
+                return None
+
+    def save_baseline(self, judge_key: str, artifact_type: str, payload: dict) -> None:
+        safe = redact_sensitive(payload)
+        text = json.dumps(safe, ensure_ascii=False, separators=(",", ":"))
+        # Never treat truncated or redacted originals as equivalence proof.
+        if safe != payload or len(text.encode()) > 2_000_000:
+            return
+        with self.connection() as conn:
+            conn.execute("insert or replace into quality_audit_baselines values(?,?,?,?,?)", (self.project, judge_key, artifact_type, text, now_iso()))
+            conn.execute("delete from quality_audit_baselines where rowid in (select rowid from quality_audit_baselines where project=? order by updated_at desc, rowid desc limit -1 offset 100)", (self.project,))
 
     def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
         with self.connection() as conn:
@@ -229,6 +266,7 @@ class QualityAuditRepository:
         issues: list[dict[str, Any]] | None = None,
         agent_run_id: str = "",
         error: str = "",
+        audit_scope: dict | None = None,
     ) -> None:
         dimensions = dimensions or {}
         with self.connection() as conn:
@@ -238,8 +276,8 @@ class QualityAuditRepository:
                     session_id, candidate_id, judge_key, provider, model, status,
                     reliability, completeness, reasonableness, non_redundancy,
                     total_score, confidence, summary, issues_json, agent_run_id,
-                    error, created_at
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    error, created_at, audit_scope_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -259,6 +297,7 @@ class QualityAuditRepository:
                     str(agent_run_id or ""),
                     redact_text(error)[:4000],
                     now_iso(),
+                    json_text(audit_scope or {"mode": "full"}),
                 ),
             )
 
@@ -391,6 +430,9 @@ def ensure_schema_once(conn: sqlite3.Connection, path: Path) -> None:
                 conn.execute(
                     f"alter table quality_artifact_candidates add column {name} text not null default ''"
                 )
+        score_columns = {str(row[1]) for row in conn.execute("pragma table_info(quality_audit_scores)")}
+        if "audit_scope_json" not in score_columns:
+            conn.execute("alter table quality_audit_scores add column audit_scope_json text not null default '{}'")
         _SCHEMA_READY[key] = inode
 
 
@@ -413,7 +455,7 @@ def prune_sessions(conn: sqlite3.Connection, project: str, retain: int) -> None:
 
 def decode_row(row: sqlite3.Row) -> dict[str, Any]:
     value = dict(row)
-    for key in ("metadata", "artifact_json", "hard_gate_issues", "dimension_averages", "issues_json"):
+    for key in ("metadata", "artifact_json", "hard_gate_issues", "dimension_averages", "issues_json", "audit_scope_json"):
         if key in value:
             try:
                 value[key] = json.loads(value[key] or "{}")

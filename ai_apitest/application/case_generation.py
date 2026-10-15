@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ai_apitest.agents.policy import bounded_task
 
 import json
 import re
@@ -49,6 +50,8 @@ from ai_apitest.tools.registry import ToolRegistry
 GatewayFactory = Callable[[dict[str, Any]], ModelGatewayProtocol]
 
 PLANNER_TOOLS = (
+    "list_test_recipes",
+    "read_test_recipe",
     "list_endpoints",
     "get_endpoint_detail",
     "list_business_rules",
@@ -59,11 +62,15 @@ PLANNER_TOOLS = (
     "submit_coverage_plan",
 )
 DESIGNER_TOOLS = (
+    "list_test_recipes",
+    "read_test_recipe",
     "get_endpoint_detail",
     "get_business_rule_detail",
     "submit_case_drafts",
 )
 SUPPLEMENT_TOOLS = (
+    "list_test_recipes",
+    "read_test_recipe",
     "list_endpoints",
     "get_endpoint_detail",
     "list_business_rules",
@@ -102,6 +109,7 @@ class GenerationTelemetry:
         )
 
 
+@bounded_task
 def generate_cases_with_agent_runtime(
     root: Path,
     endpoints: list[Endpoint],
@@ -124,6 +132,8 @@ def generate_cases_with_agent_runtime(
     tools = tool_registry or build_case_generation_tool_registry()
     telemetry = GenerationTelemetry()
     agent_config = config.get("agents", {})
+    from ai_apitest.agents.token_optimization import TokenOptimization
+    optimization = TokenOptimization.from_config(agent_config)
     planner_batch_size = bounded_int(agent_config.get("planner_batch_endpoints"), 25, 1, 100)
     designer_batch_size = bounded_int(agent_config.get("designer_batch_endpoints"), 8, 1, 30)
     designer_scenario_size = bounded_int(agent_config.get("designer_batch_scenarios"), 8, 1, 30)
@@ -154,7 +164,7 @@ def generate_cases_with_agent_runtime(
     }
     needs_semantic_planning = bool(
         quality_feedback
-        or not testable_rule_ids
+        or (not testable_rule_ids and (not optimization.enabled or agent_config.get("planner_on_complete_contract", True)))
         or testable_rule_ids - planned_rule_ids
         or any(item.get("origin") == "contract" for item in plan)
         or agent_config.get("planner_on_complete_contract", True)
@@ -255,7 +265,7 @@ def generate_cases_with_agent_runtime(
         if not is_llm_configured(designer_model):
             raise ValueError("case_designer 对应的用例生成模型未配置")
 
-    batches = plan_batches(semantic_plan, endpoints, designer_batch_size, designer_scenario_size)
+    batches = plan_batches(semantic_plan, endpoints, designer_batch_size, designer_scenario_size, input_token_limit=optimization.batch_input_tokens if optimization.enabled and optimization.adaptive_batches else None)
     for index, (batch_plan, batch_endpoints) in enumerate(batches, start=1):
         emit(
             stream_callback,
@@ -376,6 +386,7 @@ def generate_cases_with_agent_runtime(
     return all_cases, "；".join(unique_strings(warnings))
 
 
+@bounded_task
 def supplement_cases_with_agent_runtime(
     root: Path,
     endpoints: list[Endpoint],
@@ -534,7 +545,7 @@ def design_and_compile_batch(
         enabled_tools=designer_tools_for_plan(plan_items),
         gateway_factory=gateway_factory,
         stream_callback=stream_callback,
-        metadata={"task": "case_design", "batch": batch_index, "batch_count": batch_count},
+        metadata={"task": "case_design", "batch": batch_index, "batch_count": batch_count, "scenario_count": len(plan_items)},
     )
     telemetry.design_runs += 1
     telemetry.include(result)
@@ -573,7 +584,7 @@ def design_and_compile_batch(
             enabled_tools=designer_tools_for_plan(target_plan),
             gateway_factory=gateway_factory,
             stream_callback=stream_callback,
-            metadata={"task": "case_design_repair", "attempt": attempt, "scenario_ids": sorted(error_ids)},
+            metadata={"task": "case_design_repair", "attempt": attempt, "scenario_ids": sorted(error_ids), "scenario_count": len(target_plan)},
         )
         telemetry.repair_runs += 1
         telemetry.include(repair_result)
@@ -1306,6 +1317,8 @@ def plan_batches(
     endpoints: list[Endpoint],
     endpoint_limit: int,
     scenario_limit: int,
+    *,
+    input_token_limit: int | None = None,
 ) -> list[tuple[list[dict[str, Any]], list[Endpoint]]]:
     by_endpoint: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     chain_items: list[dict[str, Any]] = []
@@ -1326,7 +1339,25 @@ def plan_batches(
         for scenario_index in range(0, len(chain_items), scenario_limit):
             scenario_batch = chain_items[scenario_index : scenario_index + scenario_limit]
             result.append((scenario_batch, endpoints_for_plan(scenario_batch, endpoints)))
-    return result
+    if input_token_limit is None:
+        return result
+    from ai_apitest.agents.runtime import estimate_tokens
+    from ai_apitest.agents.token_optimization import canonical
+    adaptive = []
+    for batch, _ in result:
+        current = []
+        for item in batch:
+            proposed = current + [item]
+            selected_endpoints = endpoints_for_plan(proposed, endpoints)
+            estimate = 2000 + estimate_tokens(canonical({"plan": proposed, "endpoints": to_jsonable(selected_endpoints)}))
+            if current and estimate > input_token_limit:
+                adaptive.append((current, endpoints_for_plan(current, endpoints)))
+                current = [item]
+            else:
+                current = proposed
+        if current:
+            adaptive.append((current, endpoints_for_plan(current, endpoints)))
+    return adaptive
 
 
 def endpoints_for_plan(plan_items: list[dict[str, Any]], endpoints: list[Endpoint]) -> list[Endpoint]:

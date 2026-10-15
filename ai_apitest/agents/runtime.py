@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Callable
 
 from ai_apitest.agents.identity import RoleRegistry, RoleSpec
@@ -80,6 +80,8 @@ class AgentRuntime:
         enabled_tools: tuple[str, ...] | None = None,
         stream_callback: Callable[[str], None] | None = None,
         metadata: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        resume: bool = False,
     ) -> AgentTaskResult:
         role = self.roles.resolve(role_id)
         active_tools = tuple(enabled_tools) if enabled_tools is not None else role.allowed_tools
@@ -100,6 +102,7 @@ class AgentRuntime:
                 f"任务尝试向角色 {role.id} 开放身份白名单外工具：{', '.join(unauthorized)}"
             )
         definitions = self.tools.definitions_for(role.id, active_tools)
+        tool_context.state["_agent_role"] = role.id
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": role.identity_text},
             {"role": "user", "content": task_prompt.strip()},
@@ -156,8 +159,114 @@ class AgentRuntime:
         terminal_tools = {name for name in active_tools if self.tools.get(name).terminal}
         original_tool_choice = config.get("tool_choice")
         original_thinking = config.get("thinking")
+        from ai_apitest.agents.policy import ACTIVE_TASK_BUDGET
+        budget = ACTIVE_TASK_BUDGET.get()
+        journal = None
+        pending_response = None
+        start_turn = 1
+        evidence_runs = [run_id]
+        if session_id is not None:
+            from ai_apitest.data.agent_sessions import AgentSession
+            from ai_apitest.execution.provenance import fingerprint
+            from pathlib import Path
+            source = Path(__file__).resolve().parents[1]
+            code_hash = fingerprint({str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(source.rglob("*.py"))})
+            signature = fingerprint({"code": code_hash, "role": asdict(role), "tools": [{"name": name, "version": self.tools.get(name).version, "input": self.tools.get(name).input_schema, "output": getattr(self.tools.get(name), "output_schema", None), "side_effect": self.tools.get(name).side_effect, "idempotent": self.tools.get(name).idempotent, "timeout_seconds": self.tools.get(name).timeout_seconds, "max_calls": self.tools.get(name).max_calls} for name in active_tools], "model": {key: config.get(key) for key in ("provider", "base_url", "model", "context_window", "default_output_tokens")}, "prompt": task_prompt, "state": tool_context.state, "endpoints": [asdict(item) for item in tool_context.data.endpoints.all()], "cases": [asdict(item) for item in tool_context.data.cases.all()], "runtime_config": runtime_config})
+            try:
+                journal = AgentSession(self.audit, session_id, signature, resume=resume)
+            except Exception as exc:
+                self.audit.finish(run_id, status="failed", usage=usage, turn_count=turns, tool_call_count=tool_call_count, error=str(exc))
+                raise
+            saved = journal.snapshot
+            if saved:
+                try:
+                    if saved.get("budget") and budget is None:
+                        raise AgentBudgetExceeded("恢复会话需要原任务预算")
+                    if budget and saved.get("budget"):
+                        budget.restore(saved["budget"])
+                except Exception as exc:
+                    journal.fail()
+                    self.audit.finish(run_id, status="failed", usage=usage, turn_count=turns, tool_call_count=tool_call_count, error=str(exc))
+                    raise
+                messages = saved["messages"]
+                tool_context.state = saved["state"]
+                usage = TokenUsage(**saved["usage"])
+                uncertain = saved.get("model_reservation", 0)
+                if uncertain:
+                    usage.add(TokenUsage(input_tokens=uncertain, total_tokens=uncertain, estimated=True))
+                tool_call_count = saved["tool_call_count"]
+                protocol_correction_used = saved["protocol_correction_used"]
+                memory = TaskMemory(**saved["memory"])
+                completed_effects = {key: ToolExecutionResult(**value) for key, value in saved.get("completed_effects", {}).items()}
+                turns = saved["turn"]
+                pending_response = saved.get("pending_response")
+                start_turn = turns if pending_response else turns + 1
+                evidence_runs = list(dict.fromkeys([*saved.get("evidence_runs", []), run_id]))
+                if saved.get("completed"):
+                    self.audit.finish(run_id, status="completed", usage=usage, turn_count=turns, tool_call_count=tool_call_count, artifact=saved.get("artifact"))
+                    journal.save(saved, status="completed")
+                    return AgentTaskResult(run_id, role, saved.get("artifact"), saved.get("text", ""), usage, turns, tool_call_count, messages)
+            def evidence_reader(evidence_id, offset, max_chars):
+                for parent in evidence_runs:
+                    try:
+                        return self.audit.read_evidence(parent, evidence_id, offset=offset, max_chars=max_chars)
+                    except (KeyError, ValueError):
+                        continue
+                raise KeyError("证据不属于当前恢复会话")
+            tool_context.evidence_reader = evidence_reader
+        def save_session(pending=None, *, completed=False, artifact=None, model_reservation=0):
+            if journal:
+                budget_state = budget.snapshot() if budget else None
+                if budget_state and model_reservation:
+                    budget_state["tokens"] += model_reservation
+                journal.save({"messages": messages, "state": tool_context.state, "usage": asdict(usage), "tool_call_count": tool_call_count, "turn": turns, "protocol_correction_used": protocol_correction_used, "memory": asdict(memory), "completed_effects": {key: asdict(value) for key, value in completed_effects.items()}, "pending_response": pending, "model_reservation": model_reservation, "evidence_runs": evidence_runs, "completed": completed, "artifact": artifact, "text": last_text, "budget": budget_state}, status="completed" if completed else "running")
+        if journal and not journal.snapshot:
+            save_session()
         try:
-            for turn_index in range(1, role.max_tool_rounds + 1):
+            from ai_apitest.agents.token_optimization import TokenOptimization, prefetch_plan
+            optimization = TokenOptimization.from_config(runtime_config)
+            if optimization.enabled and optimization.prefetch and not tool_context.state.get("_prefetch_done"):
+                capacity = min(role.token_budget, int(config.get("context_window") or 128000)) - estimate_request_tokens(messages, definitions) - int(config.get("default_output_tokens") or 8000) - recovery_policy.safety_margin_tokens
+                plan = prefetch_plan(role.id, tool_context, active_tools, optimization, max(0, capacity))
+                # Validate the entire fixed plan before performing any reads.
+                if len(plan) > role.max_tool_calls or any(self.tools.get(name).side_effect != "read" or self.tools.get(name).terminal for name, _ in plan):
+                    plan = []
+                facts = []
+                for name, arguments in plan:
+                    signature = tool_call_signature(name, arguments)
+                    key = "prefetch:" + signature
+                    spec = self.tools.get(name)
+                    recovered = journal.begin_call(key, spec) if journal else None
+                    if recovered:
+                        result, tool_context.state = recovered
+                    else:
+                        if budget:
+                            budget.tool()
+                            if journal:
+                                journal.update_budget(budget.snapshot())
+                        result = self.tools.execute(role_id=role.id, allowed_tools=active_tools, name=name, arguments=arguments, context=tool_context)
+                        if journal:
+                            journal.finish_call(key, result, tool_context.state)
+                    if result.is_error:
+                        raise AgentRuntimeError("固定事实预取失败：" + result.content)
+                    evidence_id = self.audit.save_evidence(run_id, 0, call_id=key, tool_name=name, content=evidence_content(result), metadata={"arguments": arguments, "prefetched": True})
+                    self.audit.record_tool_call(run_id, 0, call_id=key, name=name, arguments=arguments, result=result.content, status="prefetch_recovered" if recovered else "prefetched", duration_ms=0)
+                    memory.record_tool_call(turn_index=0, call_id=key, name=name, arguments=arguments, evidence_id=evidence_id, result_content=result.content, is_error=False, terminal=False, deduplicated=bool(recovered))
+                    value = result.value
+                    if name == "read_audit_artifact_chunk" and isinstance(value, dict):
+                        # Avoid escaping an entire JSON evidence package as a string.
+                        try:
+                            value = {**value, "content": json.loads(value["content"])}
+                        except (ValueError, KeyError, TypeError):
+                            pass
+                    facts.append({"tool": name, "arguments": arguments, "evidence_id": evidence_id, "value": value})
+                if facts:
+                    messages[0]["content"] += "\n框架已通过角色授权的只读工具预取下列事实，视为完成对应读取。直接使用完整事实，不必重复调用读取工具；原审查规则和终止工具要求仍然适用。iatest-facts/1 的 $iatest_fact 引用须按同包 facts 字典展开，所有定义均为完整原文。"
+                    messages.append({"role": "user", "content": "[框架已读取的完整事实]\n" + json.dumps(facts, ensure_ascii=False, separators=(",", ":"))})
+                tool_context.state["_prefetch_done"] = True
+                tool_context.state["_prefetch_calls"] = len(plan)
+                save_session()
+            for turn_index in range(start_turn, role.max_tool_rounds + 1):
                 turns = turn_index
                 endpoint_checkpoint = tool_context.state.pop(
                     "endpoint_submission_checkpoint",
@@ -200,7 +309,7 @@ class AgentRuntime:
                     policy=recovery_policy,
                     run_id=run_id,
                     stream_callback=stream_callback,
-                )
+                ) if pending_response is None else (messages, estimate_request_tokens(messages, definitions))
                 remaining_budget = role.token_budget - usage.total_tokens
                 max_output = min(
                     int(config.get("default_output_tokens") or 8000),
@@ -212,7 +321,9 @@ class AgentRuntime:
                         - recovery_policy.safety_margin_tokens,
                     ),
                 )
-                if max_output < 128:
+                if optimization.enabled and optimization.adaptive_batches and role.id == "case_designer" and (metadata or {}).get("scenario_count"):
+                    max_output = min(max_output, max(2048, 1024 + 1400 * int(metadata["scenario_count"])))
+                if max_output < 128 and pending_response is None:
                     raise AgentBudgetExceeded(
                         f"角色 {role.id} 剩余 Token 预算不足以安全发起下一轮："
                         f"剩余 {remaining_budget}，预计输入 {estimated_input}"
@@ -256,16 +367,37 @@ class AgentRuntime:
                 turn_definitions = definitions
                 if forced_tool and forced_tool in active_tools:
                     turn_definitions = self.tools.definitions_for(role.id, (forced_tool,))
-                response = self.gateway.complete(
-                    messages=messages,
-                    tools=turn_definitions,
-                    timeout=role.timeout_seconds,
-                    max_tokens=max_output,
-                    stream_callback=stream_callback,
-                )
-                ensure_usage(response, messages, turn_definitions)
-                usage.add(response.usage)
-                self.audit.record_turn(run_id, turn_index, response)
+                if pending_response is None:
+                    if budget:
+                        max_output = budget.reserve(estimated_input, max_output)
+                    reservation = estimated_input + max_output
+                    from ai_apitest.ai.provider import MODEL_HTTP_ATTEMPTS
+                    attempt_token = MODEL_HTTP_ATTEMPTS.set(0)
+                    request_started = time.monotonic()
+                    request_metrics = {"estimated_input_tokens": estimate_request_tokens(messages, turn_definitions), "budget_estimated_input_tokens": estimated_input, "estimated_system_tokens": estimate_tokens(str(messages[0].get("content") or "")), "estimated_tool_schema_tokens": estimate_tokens(json.dumps(turn_definitions, ensure_ascii=False)), "message_chars": len(json.dumps(messages, ensure_ascii=False)), "tool_count": len(turn_definitions), "output_limit": max_output, "prefetch_calls": tool_context.state.get("_prefetch_calls", 0)}
+                    try:
+                        save_session(model_reservation=reservation)
+                        timeout = min(role.timeout_seconds, budget.remaining()) if budget else role.timeout_seconds
+                        response = self.gateway.complete(messages=messages, tools=turn_definitions, timeout=timeout, max_tokens=max_output, stream_callback=stream_callback)
+                    except BaseException:
+                        request_metrics.update(http_attempts=MODEL_HTTP_ATTEMPTS.get(), elapsed_ms=round((time.monotonic() - request_started) * 1000), cost_uncertain=True, reserved_tokens=reservation)
+                        self.audit.record_turn(run_id, turn_index, ModelResponse(finish_reason="request_error"), request_metrics=request_metrics, error="模型请求失败；实际用量未知")
+                        if budget:
+                            budget.settle(reservation, reservation)
+                        raise
+                    finally:
+                        request_metrics["elapsed_ms"] = round((time.monotonic() - request_started) * 1000)
+                        request_metrics["http_attempts"] = MODEL_HTTP_ATTEMPTS.get()
+                        MODEL_HTTP_ATTEMPTS.reset(attempt_token)
+                    ensure_usage(response, messages, turn_definitions)
+                    usage.add(response.usage)
+                    if budget:
+                        budget.settle(reservation, response.usage.total_tokens)
+                    self.audit.record_turn(run_id, turn_index, response, request_metrics=request_metrics)
+                else:
+                    response = self._restore_response(pending_response)
+                pending_response = None
+                save_session(asdict(response))
                 if usage.total_tokens > role.token_budget:
                     raise AgentBudgetExceeded(
                         f"角色 {role.id} 超出 Token 预算：{usage.total_tokens}/{role.token_budget}"
@@ -275,7 +407,7 @@ class AgentRuntime:
                     messages.append(response.assistant_message())
                     for call in response.tool_calls:
                         tool_call_count += 1
-                        if tool_call_count > role.max_tool_calls:
+                        if tool_call_count + tool_context.state.get("_prefetch_calls", 0) > role.max_tool_calls:
                             raise AgentLoopLimitExceeded(
                                 f"角色 {role.id} 超出工具调用上限：{role.max_tool_calls}"
                             )
@@ -291,12 +423,26 @@ class AgentRuntime:
                             and signature in completed_effects
                         )
                         started = time.monotonic()
+                        durable_key = f"{turn_index}:{call.id}:{signature}"
+                        recovered = journal.begin_call(durable_key, spec) if journal and spec and call.name in active_tools and role.id in spec.allowed_roles else None
+                        if budget and not recovered:
+                            budget.tool()
+                            if journal:
+                                journal.update_budget(budget.snapshot())
+                        if recovered:
+                            tool_context.state = recovered[1]
                         result = (
-                            completed_effects[signature]
-                            if deduplicated
+                            recovered[0] if recovered else completed_effects[signature]
+                            if deduplicated or recovered
                             else self._execute_tool(role, active_tools, call, tool_context)
                         )
                         elapsed_ms = int((time.monotonic() - started) * 1000)
+                        if journal and spec and spec.side_effect != "read" and not spec.idempotent and result.is_error:
+                            from ai_apitest.data.agent_sessions import SessionRecoveryError
+                            raise SessionRecoveryError("非幂等工具执行失败，副作用未知，已停止")
+                        if journal and spec and call.name in active_tools and role.id in spec.allowed_roles and not recovered:
+                            journal.finish_call(durable_key, result, tool_context.state)
+                        deduplicated = deduplicated or bool(recovered)
                         if (
                             spec is not None
                             and spec.side_effect != "read"
@@ -356,6 +502,7 @@ class AgentRuntime:
                             deduplicated=deduplicated,
                         )
                         if result.terminal and not result.is_error:
+                            save_session(completed=True, artifact=result.value)
                             self.audit.finish(
                                 run_id,
                                 status="completed",
@@ -374,6 +521,7 @@ class AgentRuntime:
                                 tool_call_count,
                                 messages,
                             )
+                    save_session()
                     continue
 
                 if terminal_tools:
@@ -389,6 +537,7 @@ class AgentRuntime:
                         memory.add_protocol_note(
                             f"第 {turn_index} 轮未调用终止工具；已要求下一轮调用 {names}。"
                         )
+                        save_session()
                         continue
                     raise AgentRuntimeError(
                         f"角色 {role.id} 未调用必须的终止工具：{', '.join(sorted(terminal_tools))}"
@@ -401,9 +550,14 @@ class AgentRuntime:
                     turn_count=turns,
                     tool_call_count=tool_call_count,
                 )
+                save_session(completed=True)
                 return AgentTaskResult(run_id, role, None, last_text, usage, turns, tool_call_count, messages)
             raise AgentLoopLimitExceeded(f"角色 {role.id} 超出最大模型轮次：{role.max_tool_rounds}")
         except Exception as exc:
+            if journal:
+                if budget:
+                    journal.update_budget(budget.snapshot())
+                journal.fail()
             self.audit.finish(
                 run_id,
                 status="failed",
@@ -413,6 +567,11 @@ class AgentRuntime:
                 error=str(exc),
             )
             raise
+
+    @staticmethod
+    def _restore_response(value: dict) -> ModelResponse:
+        from ai_apitest.ai.provider import ModelToolCall
+        return ModelResponse(**{**value, "usage": TokenUsage(**value["usage"]), "tool_calls": [ModelToolCall(**item) for item in value["tool_calls"]]})
 
     def _prepare_messages(
         self,
@@ -560,7 +719,7 @@ def ensure_usage(
     )
     input_tokens = estimate_tokens(input_text)
     output_tokens = estimate_tokens(output_text)
-    response.usage = TokenUsage(input_tokens, output_tokens, input_tokens + output_tokens)
+    response.usage = TokenUsage(input_tokens, output_tokens, input_tokens + output_tokens, estimated=True)
 
 
 def evidence_content(result: ToolExecutionResult) -> str:

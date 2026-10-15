@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import hashlib
+import math
+import time
+from contextlib import nullcontext
+from dataclasses import replace
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -20,6 +24,14 @@ class ToolInputError(ValueError):
     pass
 
 
+class ToolOutputError(ValueError):
+    pass
+
+
+class ToolTimeoutError(ValueError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class ToolSpec:
     name: str
@@ -32,6 +44,9 @@ class ToolSpec:
     terminal: bool = False
     result_limit_chars: int = 24000
     version: str = "1.0"
+    output_schema: Any = None
+    timeout_seconds: float | None = None
+    max_calls: int | None = None
 
     def provider_definition(self) -> dict[str, Any]:
         return {
@@ -74,6 +89,14 @@ class ToolRegistry:
             raise ValueError(f"工具 {spec.name} 的副作用等级无效：{spec.side_effect}")
         if spec.name in self._tools:
             raise ValueError(f"工具重复注册：{spec.name}")
+        from ai_apitest.core.schema import check_schema
+        check_schema(spec.input_schema)
+        if spec.output_schema is not None:
+            check_schema(spec.output_schema)
+        if spec.timeout_seconds is not None and (type(spec.timeout_seconds) not in (int, float) or spec.timeout_seconds <= 0 or not math.isfinite(spec.timeout_seconds)):
+            raise ValueError("工具时限必须为有限正数")
+        if spec.max_calls is not None and (type(spec.max_calls) is not int or spec.max_calls < 1):
+            raise ValueError("工具调用预算必须为正整数")
         self._tools[spec.name] = spec
 
     def get(self, name: str) -> ToolSpec:
@@ -106,12 +129,39 @@ class ToolRegistry:
         if role_id not in spec.allowed_roles:
             raise ToolPermissionError(f"工具 {name} 不允许角色 {role_id} 调用")
         validate_json_schema(arguments, spec.input_schema, path="arguments")
-        value = spec.handler(arguments, context)
+        counts = context.state.setdefault("_tool_call_counts", {})
+        counts[name] = counts.get(name, 0) + 1
+        if spec.max_calls is not None and counts[name] > spec.max_calls:
+            raise ToolInputError("工具调用次数超出预算")
+        from ai_apitest.execution.control import ACTIVE_RUNTIME, ExecutionRuntime, RunControl, RunCancelled, activate, check_control
+        runtime = ACTIVE_RUNTIME.get()
+        manager = nullcontext()
+        if spec.timeout_seconds is not None:
+            remaining = runtime.control.remaining() if runtime else None
+            timeout = min(spec.timeout_seconds, remaining) if remaining is not None else spec.timeout_seconds
+            control = RunControl(timeout_seconds=timeout, request_parent=runtime.control if runtime else None, cancellation_check=(lambda: bool(runtime.control.reason())) if runtime else None)
+            manager = activate(replace(runtime, control=control) if runtime else ExecutionRuntime(control=control))
+        started = time.monotonic()
+        try:
+            with manager:
+                check_control()
+                value = spec.handler(arguments, context)
+        except RunCancelled as exc:
+            if spec.timeout_seconds is not None and (not runtime or not runtime.control.reason()):
+                raise ToolTimeoutError("工具执行超过协作时限；不能确认其副作用完成状态") from exc
+            raise
+        if spec.timeout_seconds is not None and time.monotonic() - started >= spec.timeout_seconds:
+            raise ToolTimeoutError("工具执行超过协作时限；不能确认其副作用完成状态")
+        check_control()
         if isinstance(value, ToolExecutionResult):
             result = value
         else:
             content = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
             result = ToolExecutionResult(content=content, value=value, terminal=spec.terminal)
+        if not result.is_error and spec.output_schema is not None:
+            from ai_apitest.core.schema import schema_errors
+            if errors := schema_errors(result.value, spec.output_schema):
+                raise ToolOutputError("工具结果不符合契约：" + "; ".join(errors))
         if len(result.content) > spec.result_limit_chars:
             result.content = bounded_tool_content(result.value, result.content, spec.result_limit_chars)
             result.truncated = True
@@ -151,63 +201,7 @@ def compact_tool_value(value: Any, *, depth: int) -> Any:
 
 
 def validate_json_schema(value: Any, schema: dict[str, Any], *, path: str) -> None:
-    """Validate the JSON Schema subset used by IATest tool definitions."""
-    any_of = schema.get("anyOf")
-    if isinstance(any_of, list) and any_of:
-        errors: list[str] = []
-        for option in any_of:
-            if not isinstance(option, dict):
-                continue
-            try:
-                validate_json_schema(value, option, path=path)
-                return
-            except ToolInputError as exc:
-                errors.append(str(exc))
-        raise ToolInputError(f"{path} 不符合任一允许类型：{'；'.join(errors)}")
-    expected_type = schema.get("type")
-    if expected_type:
-        valid = {
-            "object": isinstance(value, dict),
-            "array": isinstance(value, list),
-            "string": isinstance(value, str),
-            "integer": isinstance(value, int) and not isinstance(value, bool),
-            "number": isinstance(value, (int, float)) and not isinstance(value, bool),
-            "boolean": isinstance(value, bool),
-            "null": value is None,
-        }.get(expected_type)
-        if valid is False:
-            raise ToolInputError(f"{path} 应为 {expected_type}")
-    if "enum" in schema and value not in schema["enum"]:
-        raise ToolInputError(f"{path} 必须是 {schema['enum']} 之一")
-    if isinstance(value, dict):
-        required = schema.get("required") or []
-        missing = [name for name in required if name not in value]
-        if missing:
-            raise ToolInputError(f"{path} 缺少必填字段：{', '.join(missing)}")
-        properties = schema.get("properties") or {}
-        if schema.get("additionalProperties") is False:
-            extra = sorted(set(value) - set(properties))
-            if extra:
-                raise ToolInputError(f"{path} 包含未知字段：{', '.join(extra)}")
-        for name, item in value.items():
-            if name in properties:
-                validate_json_schema(item, properties[name], path=f"{path}.{name}")
-    if isinstance(value, list):
-        if "minItems" in schema and len(value) < int(schema["minItems"]):
-            raise ToolInputError(f"{path} 至少需要 {schema['minItems']} 项")
-        if "maxItems" in schema and len(value) > int(schema["maxItems"]):
-            raise ToolInputError(f"{path} 最多允许 {schema['maxItems']} 项")
-        item_schema = schema.get("items")
-        if isinstance(item_schema, dict):
-            for index, item in enumerate(value):
-                validate_json_schema(item, item_schema, path=f"{path}[{index}]")
-    if isinstance(value, str):
-        if "minLength" in schema and len(value) < int(schema["minLength"]):
-            raise ToolInputError(f"{path} 长度不能小于 {schema['minLength']}")
-        if "maxLength" in schema and len(value) > int(schema["maxLength"]):
-            raise ToolInputError(f"{path} 长度不能大于 {schema['maxLength']}")
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if "minimum" in schema and value < schema["minimum"]:
-            raise ToolInputError(f"{path} 不能小于 {schema['minimum']}")
-        if "maximum" in schema and value > schema["maximum"]:
-            raise ToolInputError(f"{path} 不能大于 {schema['maximum']}")
+    """Validate complete local JSON Schema; runtime refs never access the network."""
+    from ai_apitest.core.schema import schema_errors
+    if errors := schema_errors(value, schema):
+        raise ToolInputError(path + ": " + "; ".join(errors))

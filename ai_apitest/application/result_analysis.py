@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ai_apitest.agents.policy import bounded_task
 
 import json
 import re
@@ -21,6 +22,7 @@ from ai_apitest.tools.registry import ToolRegistry
 GatewayFactory = Callable[[dict[str, Any]], ModelGatewayProtocol]
 
 
+@bounded_task
 def analyze_results_with_agent_runtime(
     root: Path,
     project: str,
@@ -49,6 +51,7 @@ def analyze_results_with_agent_runtime(
     return render_analysis_artifact(artifact)
 
 
+@bounded_task
 def generate_result_analysis_artifact_with_agent_runtime(
     root: Path,
     project: str,
@@ -162,6 +165,7 @@ def generate_result_analysis_artifact_with_agent_runtime(
     }
 
 
+@bounded_task
 def review_failed_results_with_agent_runtime(
     root: Path,
     project: str,

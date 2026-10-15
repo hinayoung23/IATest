@@ -6,9 +6,13 @@ AI 驱动的接口自动化测试框架，用于识别接口、生成用例、�
 
 [English](#english) | [中文](#中文)
 
-[Release 1.0.4 / 1.0.4 发布说明](docs/releases/1.0.4.md)
+[Release 1.1.0 / 1.1.0 发布说明](docs/releases/1.1.0.md)
 
 [CI execution, datasets, authentication, polling and plugins / 框架补充与使用说明](docs/framework-improvements.md)
+
+[Runtime data, agent evaluation, recovery and MCP / 运行时数据、Agent 评测、恢复与 MCP](docs/agent-data-evolution.md)
+
+[Provider-independent token optimization / 模型无关的 Token 优化与用量统计](docs/agent-data-evolution.md#模型无关的-token-优化)
 
 ---
 

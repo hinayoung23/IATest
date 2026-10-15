@@ -78,7 +78,7 @@ def main() -> None:
             atomic_write_text(output / f"{indexes[result.case_id]}.json", serialized)
             emit(f"IATEST_RESULT {indexes[result.case_id]} {serialized}")
 
-    control = RunControl(timeout_seconds=payload["timeout"], cancellation_check=lambda: (output / "cancel").exists())
+    control = RunControl(timeout_seconds=payload["timeout"], cancellation_check=lambda: (output / "cancel").exists(), max_requests=payload["config"].get("execution", {}).get("max_requests"))
     limiter = RequestRateLimiter([EndpointRateLimit(**item) for item in payload["rate_policies"]])
     try:
         with policy_scope(policy), open(os.devnull, "w") as logs, redirect_stdout(logs), redirect_stderr(logs):

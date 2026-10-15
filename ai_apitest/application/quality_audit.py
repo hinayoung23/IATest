@@ -1,10 +1,11 @@
 from __future__ import annotations
+from contextvars import copy_context
 
 import hashlib
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,11 +21,13 @@ from ai_apitest.data.quality_audits import QualityAuditRepository
 from ai_apitest.domain.case_drafts import case_execution_signature, step_execution_payload
 from ai_apitest.tools.builtin import build_case_generation_tool_registry
 from ai_apitest.tools.registry import ToolRegistry
+from ai_apitest.agents.token_optimization import TokenOptimization, canonical, content_hash, pack_evidence
+from ai_apitest.application.incremental_audit import incremental_bundle
 
 
 GatewayFactory = Callable[[dict[str, Any]], ModelGatewayProtocol]
 DIMENSIONS = ("reliability", "completeness", "reasonableness", "non_redundancy")
-RUBRIC_VERSION = "2026-07-30.16"
+RUBRIC_VERSION = "2026-10-14.17"
 
 ARTIFACT_RUBRICS = {
     "endpoint_catalog": (
@@ -127,6 +130,7 @@ class JudgeScore:
     agent_run_id: str = ""
     error: str = ""
     cached: bool = False
+    audit_scope: dict[str, Any] = field(default_factory=lambda: {"mode": "full"})
 
 
 @dataclass(slots=True)
@@ -201,6 +205,7 @@ class QualityAuditService:
         self.roles = role_registry or default_role_registry()
         self.tools = tool_registry or build_case_generation_tool_registry()
         config = load_config(root)
+        self.optimization = TokenOptimization.from_config(config.get("agents", {}))
         self.policy = QualityAuditPolicy.from_config(config.get("quality_audit"))
         artifact_enabled = bool(
             config.get("quality_audit", {}).get("artifacts", {}).get(artifact_type, True)
@@ -211,6 +216,16 @@ class QualityAuditService:
             if self.active
             else []
         )
+        source = Path(__file__).resolve().parents[1]
+        cache_context = content_hash({
+            "rubric": RUBRIC_VERSION,
+            "policy": asdict(self.policy),
+            "role": asdict(self.roles.resolve("quality_reviewer")),
+            "tools": [asdict(tool) | {"handler": getattr(tool.handler, "__qualname__", type(tool.handler).__qualname__)} for tool in self.tools.all() if "quality_reviewer" in tool.allowed_roles],
+            "code": {str(path.relative_to(source)): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(source.rglob("*.py"))},
+            "optimization": asdict(self.optimization),
+        })
+        self.models = [replace(model, key=content_hash({"judge": model.key, "context": cache_context, "model_config": {key: value for key, value in model.config.items() if "key" not in key.lower()}})) for model in self.models]
         self.repository = QualityAuditRepository(root, project)
         self.session_id = self.repository.start_session(
             artifact_type=artifact_type,
@@ -291,8 +306,10 @@ class QualityAuditService:
             "evidence": to_jsonable(evidence),
             "hard_gate_issues": gate_issues,
         }
+        safe_bundle = redact_sensitive(bundle)
+        source_equivalent = canonical(safe_bundle) == canonical(bundle)
         artifact_text = json.dumps(
-            redact_sensitive(bundle),
+            safe_bundle,
             ensure_ascii=False,
             separators=(",", ":"),
             default=str,
@@ -304,6 +321,7 @@ class QualityAuditService:
             artifact_text,
             audit_input_hash,
             round_index,
+            allow_incremental=source_equivalent,
         )
         audit_complete = all(score.status == "completed" for score in scores) and (
             len(scores) == len(self.models) if self.policy.require_all_models else bool(scores)
@@ -322,6 +340,30 @@ class QualityAuditService:
             decision_reasons=reasons,
         )
         self.rounds.append(result)
+        if (
+            result.passed
+            and self.optimization.enabled
+            and self.optimization.incremental_audit
+            and self.artifact_type == "test_cases"
+            and source_equivalent
+        ):
+            for score in scores:
+                if (
+                    score.status == "completed"
+                    and score.audit_scope.get("verdict") == "approved"
+                    and score.confidence == "high"
+                    and not score.issues
+                    and score.total_score > self.policy.threshold
+                    and score.dimensions["reliability"] >= self.policy.reliability_min
+                    and score.dimensions["completeness"] >= self.policy.completeness_min
+                ):
+                    self.repository.save_baseline(score.judge_key, self.artifact_type, {
+                        "candidate_id": candidate_id,
+                        "judge_key": score.judge_key,
+                        "dimensions": score.dimensions,
+                        "bundle": json.loads(artifact_text),
+                        "depth": score.audit_scope.get("baseline_depth", 0) + 1 if score.audit_scope.get("mode") == "incremental" else 0,
+                    })
         if stream_callback:
             score_text = f"{result.average_score:.2f}" if result.average_score is not None else "-"
             stream_callback(
@@ -356,6 +398,8 @@ class QualityAuditService:
         artifact_text: str,
         audit_input_hash: str,
         round_index: int,
+        *,
+        allow_incremental: bool = True,
     ) -> list[JudgeScore]:
         def review(model: AuditModel) -> JudgeScore:
             cached = self.repository.cached_score(audit_input_hash, model.key)
@@ -363,6 +407,18 @@ class QualityAuditService:
                 score = score_from_cache(cached, model, self.policy.weights)
                 self._record_score(candidate_id, score)
                 return score
+            wire_bundle = json.loads(artifact_text)
+            scope = {"mode": "full"}
+            baseline = None
+            if self.optimization.enabled and self.optimization.incremental_audit and allow_incremental:
+                baseline = self.repository.get_baseline(model.key, self.artifact_type)
+                delta = incremental_bundle(wire_bundle, baseline) if baseline else None
+                if delta:
+                    wire_bundle, scope = delta
+            if self.optimization.enabled and self.optimization.evidence_dedup:
+                wire_bundle, packing = pack_evidence(wire_bundle)
+                scope = {**scope, "evidence_packing": packing}
+            wire_text = canonical(wire_bundle)
             errors: list[str] = []
             score: JudgeScore | None = None
             for attempt in range(1, self.policy.judge_max_attempts + 1):
@@ -375,22 +431,18 @@ class QualityAuditService:
                             "artifact_type": self.artifact_type,
                             "round_index": round_index,
                             "attempt": attempt,
-                            "evidence_chars": len(artifact_text),
-                            "evidence_sha256": hashlib.sha256(artifact_text.encode("utf-8")).hexdigest(),
+                            "evidence_chars": len(wire_text),
+                            "evidence_sha256": hashlib.sha256(wire_text.encode("utf-8")).hexdigest(),
+                            "audit_scope": scope,
                         },
                         endpoints=self.endpoints,
                         llm={
                             **model.config,
-                            # 大型交付物的结构化 issues 可能超过通用 8K 输出上限。
-                            # 一次给足终止工具输出预算，比截断后携带整包证据重试更省资源。
-                            "default_output_tokens": max(
-                                16000,
-                                int(model.config.get("default_output_tokens") or 8000),
-                            ),
+                            "default_output_tokens": min(int(model.config.get("default_output_tokens") or 8000), self.optimization.audit_output_tokens * (2 ** (attempt - 1))) if self.optimization.enabled else max(16000, int(model.config.get("default_output_tokens") or 8000)),
                         },
                         rubric=ARTIFACT_RUBRICS[self.artifact_type],
                         calibration_feedback=errors[-1] if errors else "",
-                        state={"audit_artifact_text": artifact_text},
+                        state={"audit_artifact_text": wire_text},
                         gateway_factory=self.gateway_factory,
                         role_registry=self.roles,
                         tool_registry=self.tools,
@@ -414,6 +466,8 @@ class QualityAuditService:
                         )
                     else:
                         calibrated_summary = str(artifact.get("summary") or "")
+                    if scope["mode"] == "incremental":
+                        dimensions = {name: min(value, baseline["dimensions"][name]) for name, value in dimensions.items()}
                     score = JudgeScore(
                         judge_key=model.key,
                         provider=model.provider,
@@ -425,6 +479,7 @@ class QualityAuditService:
                         summary=calibrated_summary[:4000],
                         issues=issues,
                         agent_run_id=str(artifact.get("_agent_run_id") or ""),
+                        audit_scope={**scope, "verdict": artifact.get("verdict")},
                     )
                     break
                 except Exception as exc:
@@ -444,7 +499,7 @@ class QualityAuditService:
             return [review(model) for model in self.models]
         results: dict[str, JudgeScore] = {}
         with ThreadPoolExecutor(max_workers=len(self.models), thread_name_prefix="quality-audit") as pool:
-            futures = {pool.submit(review, model): model for model in self.models}
+            futures = {pool.submit(copy_context().run, review, model): model for model in self.models}
             for future in as_completed(futures):
                 model = futures[future]
                 try:
@@ -476,6 +531,7 @@ class QualityAuditService:
             issues=score.issues,
             agent_run_id=score.agent_run_id,
             error=score.error,
+            audit_scope=score.audit_scope,
         )
 
     def _finish_round(
@@ -1070,6 +1126,7 @@ def score_from_cache(
         issues=normalize_issues(value.get("issues_json") or []),
         agent_run_id=str(value.get("agent_run_id") or ""),
         cached=True,
+        audit_scope=value.get("audit_scope_json") or {"mode": "full"},
     )
 
 

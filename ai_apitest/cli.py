@@ -216,13 +216,15 @@ def run(
     allow_all_skipped: bool = typer.Option(False, help="允许全部跳过返回成功"),
     fail_on_flaky: bool = typer.Option(False, help="重试恢复的用例也令命令失败"),
     isolation: str = typer.Option("", help="隔离模式：policy/process/container/off；默认使用配置"),
+    samples: int | None = typer.Option(None, help="每条用例的样本数，覆盖本次运行"),
+    replay_run: int | None = typer.Option(None, help="重放指定运行的失败生成数据"),
 ) -> None:
     root = cwd_root()
     init_project(root, project)
     case_ids = {item.strip() for item in cases.split(",") if item.strip()} or None
     try:
         shard_index, shard_count = [int(value) for value in shard.split("/")]
-        options = RunOptions(environment=environment, tags={item.strip() for item in tags.split(",") if item.strip()}, priorities={item.strip().upper() for item in priority.split(",") if item.strip()}, shard_index=shard_index, shard_count=shard_count, seed=seed or None, timeout_seconds=timeout, rerun_failed=rerun_failed, retries=retries, isolation=isolation)
+        options = RunOptions(environment=environment, tags={item.strip() for item in tags.split(",") if item.strip()}, priorities={item.strip().upper() for item in priority.split(",") if item.strip()}, shard_index=shard_index, shard_count=shard_count, seed=seed or None, timeout_seconds=timeout, rerun_failed=rerun_failed, retries=retries, isolation=isolation, samples=samples, replay_run=replay_run)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     with project_operation_lock(root, project, operation="cli:run"):
@@ -324,6 +326,63 @@ def agent_runs(project: str = "default", limit: int = 20) -> None:
     root = cwd_root()
     init_project(root, project)
     console.print_json(data=AgentRunRepository(root, project).list_recent(limit=limit))
+
+
+@app.command("token-stats")
+def token_stats(project: str = "default", limit: int = 500, output: Path | None = None):
+    """按角色和实际模型查看本地 Token、缓存、推理及失败请求记录。"""
+    from ai_apitest.data.token_usage import token_statistics
+    from ai_apitest.core.serde import write_json
+    value = token_statistics(cwd_root(), project, limit=limit)
+    if output:
+        write_json(output, value)
+    console.print_json(data=value)
+
+
+@app.command("agent-eval")
+def agent_eval(suite: Path, trials: int = 1, live: bool = False, output: Path | None = None, model_role: str = typer.Option("", "--model-role", help="选择现有模型配置：master/case_generator/analyzer")) -> None:
+    """回放 Agent 评测；--live 显式调用已配置模型。"""
+    from ai_apitest.agents.evaluation import evaluate_agent_suite
+    from ai_apitest.core.sandbox import read_file
+    from ai_apitest.core.serde import write_json
+    import json
+    result = evaluate_agent_suite(cwd_root(), json.loads(read_file(suite, 20_000_000)), trials=trials, live=live, model_role=model_role or None)
+    if output:
+        write_json(output, result)
+    console.print_json(data=result["summary"])
+    if result["summary"]["success_rate"] != 1:
+        raise typer.Exit(1)
+
+
+@app.command("agent-task")
+def agent_task(prompt: Path, role: str = "case_designer", project: str = "default", session: str = "", resume: bool = False, document: Path | None = None, output: Path | None = None):
+    """运行受限 Agent 候选任务；显式会话支持持久化恢复，不保存正式用例。"""
+    from ai_apitest.application.agent_service import run_agent_role
+    from ai_apitest.agents.identity import default_role_registry
+    from ai_apitest.tools.builtin import build_case_generation_tool_registry
+    from ai_apitest.core.sandbox import read_file
+    from ai_apitest.core.serde import write_json, endpoint_from_dict
+    from ai_apitest.core.paths import project_docs_file
+    root = cwd_root()
+    if resume and not session:
+        raise typer.BadParameter("恢复任务必须指定 --session")
+    roles = default_role_registry()
+    from ai_apitest.ai.workflows import configured_llm
+    state = {"document_text": read_file(document, 20_000_000).decode("utf-8")} if document else {}
+    with project_operation_lock(root, project, operation="agent-task"):
+        result = run_agent_role(root=root, project=project, endpoints=[endpoint_from_dict(item) for item in read_json(project_docs_file(root, project), [])], role_id=role, task_prompt=read_file(prompt, 1_000_000).decode("utf-8"), model_config=configured_llm(root, roles.resolve(role).model_role), roles=roles, tools=build_case_generation_tool_registry(), session_id=session or None, resume=resume, state=state)
+    value = {"run_id": result.run_id, "session_id": session, "artifact": result.artifact, "tokens": result.usage.total_tokens, "tool_calls": result.tool_calls}
+    from ai_apitest.core.redaction import redact
+    if output:
+        write_json(output, redact(value))
+    console.print_json(data=redact(value))
+
+
+@app.command("mcp")
+def mcp_server():
+    """启动只读 MCP stdio 服务；stdout 仅输出 JSON-RPC。"""
+    from ai_apitest.integrations.mcp_server import MCPServer
+    MCPServer(cwd_root()).serve()
 
 
 @app.command()

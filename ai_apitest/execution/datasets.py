@@ -53,14 +53,14 @@ def dataset_rows(spec: Any, root: Path, config: dict[str, Any]) -> list[dict[str
     return rows
 
 
-def expand_cases(cases: list[TestCase], root: Path, config: dict[str, Any]) -> list[TestCase]:
+def expand_cases(cases: list[TestCase], root: Path, config: dict[str, Any], *, samples: int | None = None) -> list[TestCase]:
     expanded = []
     settings = config.get("sandbox", {})
     max_cases = int(positive(settings, "max_cases", 10000))
     max_input = int(positive(settings, "max_input_bytes", 64_000_000))
     input_bytes = 0
 
-    def append(case):
+    def append_one(case):
         nonlocal input_bytes
         if len(expanded) >= max_cases:
             raise ValueError("展开用例数量超过 sandbox.max_cases 限制")
@@ -71,6 +71,26 @@ def expand_cases(cases: list[TestCase], root: Path, config: dict[str, Any]) -> l
         if input_bytes > max_input:
             raise ValueError("展开用例总大小超过 sandbox.max_input_bytes 限制")
         expanded.append(case)
+    def append(case):
+        count = samples if samples is not None else case.samples
+        if type(count) is not int or not 1 <= count <= max_cases:
+            raise ValueError("samples 必须是配额范围内的正整数")
+        if not isinstance(case.data_generation, dict):
+            raise ValueError("data_generation 必须是对象")
+        if not case.data_generation and count == 1:
+            append_one(case)
+            return
+        from ai_apitest.execution.data_generation import generation_schema
+        for spec in case.data_generation.values():
+            generation_schema(spec)
+        for index in range(1, count + 1):
+            item = copy.deepcopy(case)
+            item.sample_index = index
+            if count > 1:
+                item.id = f"{case.id}[sample-{index:04d}]"
+                item.sample_origin_id = case.id
+                item.origin_case_id = case.origin_case_id or case.id
+            append_one(item)
     for case in cases:
         if not isinstance(case.variables, dict) or not isinstance(case.poll, dict):
             raise ValueError(f"{case.id}: variables 和 poll 必须是对象")
