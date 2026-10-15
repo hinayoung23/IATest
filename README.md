@@ -6,14 +6,6 @@ AI 驱动的接口自动化测试框架，用于识别接口、生成用例、�
 
 [English](#english) | [中文](#中文)
 
-[Release 1.1.0 / 1.1.0 发布说明](docs/releases/1.1.0.md)
-
-[CI execution, datasets, authentication, polling and plugins / 框架补充与使用说明](docs/framework-improvements.md)
-
-[Runtime data, agent evaluation, recovery and MCP / 运行时数据、Agent 评测、恢复与 MCP](docs/agent-data-evolution.md)
-
-[Provider-independent token optimization / 模型无关的 Token 优化与用量统计](docs/agent-data-evolution.md#模型无关的-token-优化)
-
 ---
 
 ## English
@@ -26,6 +18,8 @@ AI 驱动的接口自动化测试框架，用于识别接口、生成用例、�
 - View reports and recent execution trends.
 - Use the local Web console in English, Simplified Chinese, Japanese, French, or Russian.
 - Connect project-provided test fixtures and run a local dependency Mock server.
+- Use datasets, constrained runtime data, and failed-input replay.
+- Inspect agent and Token usage, and query project artifacts through read-only MCP tools.
 
 ### Requirements
 
@@ -33,7 +27,7 @@ AI 驱动的接口自动化测试框架，用于识别接口、生成用例、�
 
 ### Install
 
-Install the latest release from PyPI:
+Install from PyPI:
 
 ```bash
 python -m pip install iatest-framework
@@ -276,6 +270,8 @@ iatest mock --project <name>
 iatest language <en|zh|ja|fr|ru>
 iatest llm-check --base-url <url> --model <model>
 iatest agent-runs --project <name>
+iatest token-stats --project <name>
+iatest mcp
 iatest maintain --project <name> --source <source> --ai-update --write
 iatest context stats --project <name>
 iatest context govern --project <name>
@@ -309,6 +305,8 @@ Do not commit `.env` or plaintext API keys.
 - 查看测试报告和最近执行趋势。
 - 使用支持英文、简体中文、日文、法文和俄文的本地 Web 控制台。
 - 接入项目方提供的外部测试能力，并启动本地依赖 Mock 服务。
+- 使用数据集、受约束的运行时数据生成和失败输入重放。
+- 查看 Agent 与 Token 用量，通过只读 MCP 工具查询项目产物。
 
 ### 环境要求
 
@@ -316,7 +314,7 @@ Do not commit `.env` or plaintext API keys.
 
 ### 安装
 
-从 PyPI 安装最新版本：
+从 PyPI 安装：
 
 ```bash
 python -m pip install iatest-framework
@@ -559,6 +557,8 @@ iatest mock --project <name>
 iatest language <en|zh|ja|fr|ru>
 iatest llm-check --base-url <url> --model <model>
 iatest agent-runs --project <name>
+iatest token-stats --project <name>
+iatest mcp
 iatest maintain --project <name> --source <source> --ai-update --write
 iatest context stats --project <name>
 iatest context govern --project <name>
@@ -581,6 +581,14 @@ projects/<project>/.iatest/        本地运行数据库和缓存
 ```
 
 不要提交 `.env` 或明文 API Key。
+
+## Documentation / 使用文档
+
+- [Execution, datasets, authentication and plugins / 执行、数据集、鉴权与插件](docs/framework-improvements.md)
+- [Runtime data, agent evaluation, recovery and MCP / 运行时数据、Agent 评测、恢复与 MCP](docs/agent-data-evolution.md)
+- [Token optimization and usage statistics / Token 优化与用量统计](docs/agent-data-evolution.md#模型无关的-token-优化)
+- [Case format / 用例格式](docs/case-format-spec.md)
+- [Execution isolation and access policies / 执行隔离与访问策略](docs/sandbox.md)
 
 ## License
 
