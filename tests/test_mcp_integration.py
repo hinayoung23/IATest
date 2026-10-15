@@ -26,7 +26,7 @@ def initialize(server):
 def test_mcp_real_stdio_protocol_read_only_and_size_limit(tmp_path):
     write_json(project_docs_file(tmp_path, "demo"), [{"method": "GET", "path": "/health", "responses": {"200": {}}}])
     messages = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}, {"jsonrpc": "2.0", "method": "notifications/initialized"}, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_contracts", "arguments": {"project": "demo"}}}, {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "get_results", "arguments": {"project": "../demo"}}}]
-    process = subprocess.run([sys.executable, "-m", "ai_apitest", "mcp"], cwd=tmp_path, input="\n".join(json.dumps(row) for row in messages) + "\n", capture_output=True, text=True, timeout=10)
+    process = subprocess.run([sys.executable, "-X", "utf8", "-m", "ai_apitest", "mcp"], cwd=tmp_path, input="\n".join(json.dumps(row) for row in messages) + "\n", capture_output=True, text=True, encoding="utf-8", timeout=10)
     assert process.returncode == 0, process.stderr
     replies = [json.loads(row) for row in process.stdout.splitlines()]
     assert len(replies) == 4

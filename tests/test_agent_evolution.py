@@ -248,10 +248,10 @@ with task_budget(root, budget=budget):
     result = runtime.run(role_id="task", task_prompt="task", tool_context=context, session_id="restart", resume=resume)
 print(json.dumps({"artifact": result.artifact, "tokens": budget.tokens, "calls": budget.tool_calls}))
 ''', encoding="utf-8")
-    args = [sys.executable, str(script), str(tmp_path)]
-    crashed = subprocess.run([*args, "crash", "unsafe" if crash_write else "safe"], capture_output=True, text=True, timeout=10)
+    args = [sys.executable, "-X", "utf8", str(script), str(tmp_path)]
+    crashed = subprocess.run([*args, "crash", "unsafe" if crash_write else "safe"], capture_output=True, text=True, encoding="utf-8", timeout=10)
     assert crashed.returncode == 17, crashed.stderr
-    restored = subprocess.run([*args, "resume", "unsafe" if crash_write else "safe"], capture_output=True, text=True, timeout=10)
+    restored = subprocess.run([*args, "resume", "unsafe" if crash_write else "safe"], capture_output=True, text=True, encoding="utf-8", timeout=10)
     assert (tmp_path / "writes.txt").read_text().splitlines() == ["written"]
     if crash_write:
         assert restored.returncode != 0 and "副作用未知" in restored.stderr
