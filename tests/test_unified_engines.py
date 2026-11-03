@@ -185,15 +185,17 @@ def test_performance_modes_exact_samples_and_gates(root, server, mode):
     spec = {
         "allowed_origins": [base],
         "mode": mode,
-        "duration_seconds": 0.18,
+        "duration_seconds": 1.5,
         "users": 2,
-        "rate": 20,
+        # This checks accounting and gates, not the shared CI runner's capacity.
+        # Saturation has a separate explicit slow-server test below.
+        "rate": 2,
         "think_seconds": 0.005,
         "request": {"url": base},
         "thresholds": {"p95_ms": 500, "max_error_ratio": 0, "max_dropped_ratio": 0},
     }
     result = execute_test_plan(root, "suite", plan("performance", spec))
-    assert result["verdict"] == "passed", result
+    assert result["verdict"] == "passed", json.dumps(result, indent=2)
     assert result["metrics"]["completed"] > 0
     assert result["metrics"]["completed"] == result["metrics"]["samples"]
     assert result["metrics"]["requests"] == result["metrics"]["completed"]

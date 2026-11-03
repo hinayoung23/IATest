@@ -118,7 +118,11 @@ def read_records(source, control, *, root=None, project="default"):
     db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.1)
     try:
         db.execute("PRAGMA query_only=ON")
-        db.enable_load_extension(False)
+        # Some Python builds (notably macOS) compile SQLite without extension
+        # loading, so the disabling API is absent. The SQL authorizer below
+        # also rejects load_extension regardless of build capabilities.
+        if hasattr(db, "enable_load_extension"):
+            db.enable_load_extension(False)
 
         def authorize(action, one, two, database, trigger):
             if action == sqlite3.SQLITE_SELECT:

@@ -54,10 +54,10 @@ def plan(base, path="/create"):
         "spec": {
             "allowed_origins": [base],
             "mode": "arrival_rate",
-            "rate": 10,
+            "rate": 2,
             "rate_unit": "transactions",
             "users": 2,
-            "duration_seconds": 0.4,
+            "duration_seconds": 2,
             "thresholds": {
                 "max_error_ratio": 0,
                 "max_transaction_error_ratio": 0,
@@ -106,7 +106,7 @@ def plan(base, path="/create"):
 def test_transactions_correlate_outputs_and_count_business_failures(root, server):
     base, calls = server
     good = execute_test_plan(root, "suite", plan(base))
-    assert good["verdict"] == "passed", good
+    assert good["verdict"] == "passed", json.dumps(good, indent=2)
     assert good["metrics"]["completed"] == good["metrics"]["transactions"] * 2
     assert any(p == "/create" and auth == "Bearer session-123" for p, auth in calls)
     assert any(p == "/order/order-123" for p, _ in calls)
@@ -119,11 +119,11 @@ def test_transactions_correlate_outputs_and_count_business_failures(root, server
 def test_phase_schedule_and_units_are_explicit(root, server):
     value = plan(server[0])
     value["spec"]["phases"] = [
-        {"duration_seconds": 0.2, "start_rate": 10, "end_rate": 10},
-        {"duration_seconds": 0.2, "start_rate": 20, "end_rate": 20},
+        {"duration_seconds": 1, "start_rate": 1, "end_rate": 1},
+        {"duration_seconds": 1, "start_rate": 2, "end_rate": 2},
     ]
     result = execute_test_plan(root, "suite", value)
-    assert result["verdict"] == "passed", result
+    assert result["verdict"] == "passed", json.dumps(result, indent=2)
     assert all(n > 0 for n in result["metrics"]["phase_counts"].values())
     value["spec"]["rate_unit"] = "requests"
     with pytest.raises(ValueError, match="transaction"):

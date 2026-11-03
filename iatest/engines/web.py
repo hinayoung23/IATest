@@ -8,8 +8,10 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 
 from iatest.core.files import atomic_write_bytes
@@ -311,9 +313,12 @@ def chromium_path() -> str:
         [configured]
         if configured
         else [
+            # Installed Chrome also has the distribution's sandbox integration;
+            # an unpackaged Chromium snapshot may lack it (e.g. Ubuntu AppArmor).
+            shutil.which("google-chrome"),
+            shutil.which("google-chrome-stable"),
             shutil.which("chromium"),
             shutil.which("chromium-browser"),
-            shutil.which("google-chrome"),
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             "/Applications/Chromium.app/Contents/MacOS/Chromium",
         ]
@@ -364,6 +369,8 @@ class BrowserSession(BrowserContexts, BrowserVisual):
         self.temp = tempfile.TemporaryDirectory(prefix="iatest-chromium-")
         self.proxy = None
         self.process = None
+        self.startup_logs = deque(maxlen=16)
+        self.log_thread = None
         self.close_job = None
         self.cdp = None
         self.session = ""
@@ -404,9 +411,16 @@ class BrowserSession(BrowserContexts, BrowserVisual):
             self.process = subprocess.Popen(
                 args,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 start_new_session=os.name != "nt" and self.owns_process_group,
             )
+
+            def capture():
+                for line in iter(lambda: self.process.stderr.readline(4096), b""):
+                    self.startup_logs.append(line.decode("utf-8", "replace")[:1000])
+
+            self.log_thread = threading.Thread(target=capture, daemon=True)
+            self.log_thread.start()
             if os.name == "nt":
                 from iatest.execution.windows_job import attach_job
 
@@ -445,8 +459,12 @@ class BrowserSession(BrowserContexts, BrowserVisual):
                 browser=True,
             )
             self.navigate(spec["start_url"])
-        except Exception:
+        except Exception as exc:
             self.close()
+            if str(exc) == "Chromium startup failed or timed out" and self.startup_logs:
+                raise RuntimeError(
+                    str(exc) + ": " + "".join(self.startup_logs)[-3000:].strip()
+                ) from exc
             raise
 
     def call(self, method, params=None, *, browser=False, timeout=10):
@@ -777,6 +795,10 @@ class BrowserSession(BrowserContexts, BrowserVisual):
                     self.process.wait(timeout=2)
                 except (OSError, subprocess.TimeoutExpired):
                     pass
+        if self.log_thread:
+            self.log_thread.join(0.5)
+            if not self.log_thread.is_alive():
+                self.process.stderr.close()
         if self.proxy:
             self.proxy.close()
         deadline = time.monotonic() + 2

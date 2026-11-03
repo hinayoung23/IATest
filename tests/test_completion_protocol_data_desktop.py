@@ -358,6 +358,36 @@ def test_real_database_readonly_and_no_partial_pass(tmp_path, monkeypatch, isola
         )
 
 
+def test_sqlite_build_without_extension_api_still_enforces_readonly(tmp_path, monkeypatch):
+    from iatest.engines.database import read_records
+
+    path = tmp_path / "no-extensions.sqlite"
+    with sqlite3.connect(path) as db:
+        db.execute("create table accounts(id integer)")
+        db.execute("insert into accounts values (42)")
+    connect = sqlite3.connect
+
+    class NoExtensionConnection(sqlite3.Connection):
+        def __getattribute__(self, name):
+            if name == "enable_load_extension":
+                raise AttributeError(name)
+            return super().__getattribute__(name)
+
+    monkeypatch.setattr(
+        sqlite3, "connect",
+        lambda *args, **kwargs: connect(*args, factory=NoExtensionConnection, **kwargs),
+    )
+    monkeypatch.setenv("IATEST_DATABASE_TEST", str(path))
+    source = {
+        "driver": "sqlite", "path_env": "IATEST_DATABASE_TEST",
+        "query": "select id from accounts", "allowed_tables": ["accounts"],
+    }
+    assert read_records(source, RunControl()) == [{"id": 42}]
+    for query in ("delete from accounts", "select load_extension('x')"):
+        with pytest.raises(ValueError):
+            read_records({**source, "query": query}, RunControl())
+
+
 def test_desktop_goal_context_compiles_to_same_deterministic_engine():
     context = _context(
         "desktop", {"platform": "macos", "process_id": 123, "app_id": "dev.iatest.lab"}
