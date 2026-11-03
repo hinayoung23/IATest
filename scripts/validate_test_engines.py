@@ -32,7 +32,7 @@ def main():
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/private/tmp/iatest-multitype-acceptance.json"),
+        default=Path("/private/tmp/iatest-test-engines-acceptance.json"),
     )
     args = parser.parse_args()
     if args.browser:
@@ -49,7 +49,7 @@ def main():
         "model": {},
     }
     try:
-        with tempfile.TemporaryDirectory(prefix="iatest-multitype-") as directory:
+        with tempfile.TemporaryDirectory(prefix="iatest-test-engines-") as directory:
             root = Path(directory)
             init_project(root, "acceptance")
 

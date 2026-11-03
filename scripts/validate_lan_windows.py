@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from iatest import __version__
 from iatest.application.testing_service import execute_test_plan
 from iatest.core.config import init_project
 from iatest.engines.transactions import percentile
@@ -81,7 +82,7 @@ def main():
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
-    wheel = args.wheel or repository / "dist/iatest_framework-1.1.0-py3-none-any.whl"
+    wheel = args.wheel or repository / f"dist/iatest_framework-{__version__}-py3-none-any.whl"
     workspace = Path(tempfile.mkdtemp(prefix="iatest-lan-acceptance-"))
     os.chmod(workspace, 0o700)
     report = {

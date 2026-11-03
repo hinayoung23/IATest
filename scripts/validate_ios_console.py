@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from iatest import __version__
 from iatest.core.config import init_project, load_config, save_config
 from iatest.core.env import load_dotenv
 from iatest.engines.store import EngineStore
@@ -93,7 +94,7 @@ def main():
             env["IATEST_WINDOWS_BUNDLE"] = json.dumps(
                 {
                     "wheel": str(
-                        repository / "dist/iatest_framework-1.1.0-py3-none-any.whl"
+                        repository / f"dist/iatest_framework-{__version__}-py3-none-any.whl"
                     ),
                     "ca_file": str(ca),
                     "controller": "https://192.0.2.1:8768",

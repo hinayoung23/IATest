@@ -62,9 +62,9 @@ const fs=require('node:fs');
       assert.ok((await page.locator('main').textContent()).includes(content.id));
     }
     const close=page.getByRole('button',{name:'关闭',exact:true});if(await close.count()&&await close.first().isVisible())await close.first().click();
-    await page.screenshot({path:'/private/tmp/iatest-multitype-console-desktop.png',fullPage:true});
+    await page.screenshot({path:'/private/tmp/iatest-test-workbench-console-desktop.png',fullPage:true});
     await page.setViewportSize({width:390,height:844});await visit('web');
-    await page.screenshot({path:'/private/tmp/iatest-multitype-console-phone.png',fullPage:true});
+    await page.screenshot({path:'/private/tmp/iatest-test-workbench-console-phone.png',fullPage:true});
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth-window.innerWidth)<=2,'390px viewport overflow');
     await page.setViewportSize({width:1440,height:1000});
     await visit('web');f=page.locator('form[action="/actions/testing-inspect"]');await fill(f,'url',lab+'/ui');await fill(f,'origins',lab);await fill(f,'selector','#login');await f.getByRole('button',{name:'查找目标',exact:true}).click();
@@ -96,7 +96,7 @@ const fs=require('node:fs');
     const report={passed:true,engines:'Real native CDP and HTTP engines; no device/engine stubs',flows:['existing plan forms','data/protocol/accessibility JSON plans','extensible security rules','parallel workflow and cleanup','background execution','web screenshot retrieval','performance arrival and users modes','security header control','read-only target inspection','390px responsive layout','locale routes','legacy navigation'],page_errors:errors};
     report.flows.push('shared resource authority start/configure/query/stop');
     report.flows.push('browser backend selector','desktop typed-plan save without native App execution','versioned security-library import','immutable manual WCAG review import');
-    fs.writeFileSync('/private/tmp/iatest-multitype-console-acceptance.json',JSON.stringify(report,null,2));
+    fs.writeFileSync('/private/tmp/iatest-test-workbench-console-acceptance.json',JSON.stringify(report,null,2));
     process.stdout.write(JSON.stringify(report)+'\n');
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
