@@ -10,15 +10,15 @@ from urllib.parse import urlencode, urlparse
 
 import pytest
 
-from ai_apitest.ai import workflows
-from ai_apitest.ai.workflows import _governance_feature_enabled
-from ai_apitest.context.dependencies import (
+from iatest.ai import workflows
+from iatest.ai.workflows import _governance_feature_enabled
+from iatest.context.dependencies import (
     infer_dependency_candidates,
     synchronize_project_dependencies,
     update_dependency_status,
 )
-from ai_apitest.context.injection import retrieve_candidates
-from ai_apitest.context.storage import (
+from iatest.context.injection import retrieve_candidates
+from iatest.context.storage import (
     LESSON_COLUMNS,
     claim_due_extraction_jobs,
     context_connection,
@@ -34,25 +34,25 @@ from ai_apitest.context.storage import (
     update_lesson_review,
     upsert_lesson,
 )
-from ai_apitest.core.config import current_environment, load_config, save_config
-from ai_apitest.core.case_schema import normalize_cases
-from ai_apitest.core.models import CaseResult, Endpoint, TestCase as ApiTestCaseModel, TestStep as ApiTestStepModel
-from ai_apitest.core.observability import record_operational_error
-from ai_apitest.core.paths import project_context_packs_dir, project_docs_file, project_metadata_file, project_task_db
-from ai_apitest.core.serde import read_json, to_jsonable, write_json
-from ai_apitest.discovery.document import detect_base_url, parse_api_document
-from ai_apitest.domain.contracts import normalize_business_rules
-from ai_apitest.execution.assertions import compare, json_path, normalize_json_path
-from ai_apitest.execution.runner import apply_path_params, encode_query, encode_request_body, initial_context
-from ai_apitest.application.result_analysis import (
+from iatest.core.config import current_environment, load_config, save_config
+from iatest.core.case_schema import normalize_cases
+from iatest.core.models import CaseResult, Endpoint, TestCase as ApiTestCaseModel, TestStep as ApiTestStepModel
+from iatest.core.observability import record_operational_error
+from iatest.core.paths import project_context_packs_dir, project_docs_file, project_metadata_file, project_task_db
+from iatest.core.serde import read_json, to_jsonable, write_json
+from iatest.discovery.document import detect_base_url, parse_api_document
+from iatest.domain.contracts import normalize_business_rules
+from iatest.execution.assertions import compare, json_path, normalize_json_path
+from iatest.execution.runner import apply_path_params, encode_query, encode_request_body, initial_context
+from iatest.application.result_analysis import (
     documented_contract_evidence,
     documented_endpoints_for_results,
     passed_case_summary,
 )
-from ai_apitest.generator.cases import generate_cases, parameter_serialization, success_assertions
-from ai_apitest.orchestrator.maintainer.auto_updater import impacted_cases
-from ai_apitest.web.server import load_endpoints, make_handler, render_config, run_task_by_id
-from ai_apitest.web.task_store import (
+from iatest.generator.cases import generate_cases, parameter_serialization, success_assertions
+from iatest.orchestrator.maintainer.auto_updater import impacted_cases
+from iatest.web.server import load_endpoints, make_handler, render_settings, run_task_by_id
+from iatest.web.task_store import (
     active_task,
     claim_task,
     create_task,
@@ -121,7 +121,7 @@ def test_report_analysis_does_not_run_inline_governance_by_default(tmp_path, mon
         },
     )
     monkeypatch.setattr(
-        "ai_apitest.application.result_analysis.analyze_results_with_agent_runtime",
+        "iatest.application.result_analysis.analyze_results_with_agent_runtime",
         lambda *args, **kwargs: (
             "### One-line conclusion\nThe run passed.\n"
             "### Result overview\n1 of 1 passed.\n"
@@ -210,11 +210,11 @@ def test_report_analysis_preserves_passed_artifact_when_later_revision_fails(tmp
         },
     )
     monkeypatch.setattr(
-        "ai_apitest.application.result_analysis.analyze_results_with_agent_runtime",
+        "iatest.application.result_analysis.analyze_results_with_agent_runtime",
         analyze,
     )
     monkeypatch.setattr(
-        "ai_apitest.application.quality_audit.QualityAuditService",
+        "iatest.application.quality_audit.QualityAuditService",
         FakeAuditService,
     )
     monkeypatch.setattr(workflows, "process_report_analysis", lambda *args, **kwargs: ("visible", {}))
@@ -759,7 +759,7 @@ def test_governance_features_are_independently_configurable_and_visible(tmp_path
 
     assert _governance_feature_enabled(tmp_path, "review_reports") is True
     assert _governance_feature_enabled(tmp_path, "review_cases") is False
-    html = render_config(tmp_path, "demo", urlparse("/config"))
+    html = render_settings(tmp_path, "demo", urlparse("/config"))
     assert "报告质量审查" in html
     assert "用例质量审查" in html
     assert "经验候选治理" in html

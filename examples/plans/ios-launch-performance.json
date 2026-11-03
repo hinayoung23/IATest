@@ -1,0 +1,12 @@
+{
+  "id": "ios-launch-recorded-journey", "kind": "client_performance",
+  "budget": {"timeout_seconds": 240},
+  "spec": {
+    "platform": "ios", "iterations": 1, "warmup": 0,
+    "ios_capture": {"mode": "launch", "duration_seconds": 120, "ready_timeout_seconds": 30, "finalize_timeout_seconds": 45},
+    "plan": {"id": "lab-ready", "kind": "ios", "spec": {"profile": "ios-lab", "steps": [
+      {"op": "expect", "target": {"identifier": "ready_label"}, "attribute": "text", "expected": "Ready", "timeout_ms": 10000}
+    ]}},
+    "thresholds": {"max_cpu_percent": 100, "max_memory_footprint_kb": 200000}
+  }
+}

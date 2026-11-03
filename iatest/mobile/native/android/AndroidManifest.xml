@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.iatest.mobile">
+  <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="36" />
+  <application android:label="IATest semantic probe" android:debuggable="true" android:allowBackup="false" android:hasCode="true">
+    <service android:name="dev.iatest.mobile.IATestIme" android:label="IATest development IME" android:permission="android.permission.BIND_INPUT_METHOD" android:exported="true">
+      <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
+      <meta-data android:name="android.view.im" android:resource="@xml/iatest_ime" />
+    </service>
+  </application>
+  <instrumentation android:name="dev.iatest.mobile.Probe" android:targetPackage="dev.iatest.mobile" android:label="IATest probe" android:functionalTest="true" />
+</manifest>

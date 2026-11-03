@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.iatest.mobile.hid">
+  <uses-sdk android:minSdkVersion="28" android:targetSdkVersion="36" />
+  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+  <application android:label="IATest Bluetooth HID" android:debuggable="true" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <activity android:name="dev.iatest.mobile.hid.MainActivity" android:exported="true" android:launchMode="singleTask">
+      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+    </activity>
+    <receiver android:name="dev.iatest.mobile.hid.ControlReceiver" android:exported="true" android:permission="android.permission.DUMP" />
+    <provider android:name="dev.iatest.mobile.hid.ManagedBleProvider" android:authorities="dev.iatest.mobile.hid.managed" android:exported="true" android:permission="android.permission.DUMP" />
+  </application>
+</manifest>

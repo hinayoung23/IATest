@@ -1,0 +1,13 @@
+{
+  "id": "android-ime-compose", "kind": "android",
+  "spec": {"profile": "android-local", "steps": [
+    {"op": "tap", "target": {"identifier": "com.example.app:id/name"}},
+    {"op": "ime", "target": {"identifier": "com.example.app:id/name"}, "ime_backend": "input_connection", "ime_events": [
+      {"op": "compose", "text": "ni", "candidates": ["你", "呢"]},
+      {"op": "expect", "composing": "ni"},
+      {"op": "candidate", "index": 0},
+      {"op": "expect", "before_cursor": "你", "composing": ""}
+    ]},
+    {"op": "expect", "target": {"identifier": "com.example.app:id/name"}, "attribute": "text", "expected": "你"}
+  ]}
+}

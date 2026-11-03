@@ -1,0 +1,11 @@
+{
+  "id": "android-multi-contact", "kind": "android",
+  "spec": {"profile": "android-local", "steps": [
+    {"op": "gesture", "target": {"identifier": "com.example.app:id/map"}, "contacts": [
+      {"id": 0, "points": [{"t_ms": 0, "x": 0.4, "y": 0.5}, {"t_ms": 400, "x": 0.1, "y": 0.5}]},
+      {"id": 1, "points": [{"t_ms": 0, "x": 0.6, "y": 0.5}, {"t_ms": 400, "x": 0.9, "y": 0.5}]},
+      {"id": 2, "points": [{"t_ms": 100, "x": 0.5, "y": 0.5}, {"t_ms": 300, "x": 0.5, "y": 0.7}]}
+    ]},
+    {"op": "expect", "target": {"identifier": "com.example.app:id/zoom"}, "attribute": "text", "expected": "replace-with-trusted-expected-value"}
+  ]}
+}

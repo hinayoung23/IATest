@@ -8,23 +8,23 @@ import threading
 import httpx
 import pytest
 
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import Endpoint, TestCase as Case, Assertion, CaseResult
-from ai_apitest.core.paths import project_metadata_file
-from ai_apitest.core.serde import write_json, case_from_dict
-from ai_apitest.core.schema import schema_errors
-from ai_apitest.core.redaction import redact
-from ai_apitest.data.generation_cache import IncrementalGenerationCache
-from ai_apitest.generator.cases import generate_cases
-from ai_apitest.domain.contracts import normalize_business_rules
-from ai_apitest.execution.fixture_checks import check_fixtures
-from ai_apitest.execution.runner import run_ordered_cases
-from ai_apitest.execution.options import RunOptions
-from ai_apitest.context.storage import save_execution_trend, trend_overview, assess_trend_comparability
-from ai_apitest.report.storage import save_run
-from ai_apitest.orchestrator.maintainer.change_detector import endpoint_signature
-from ai_apitest.web.task_store import create_task, request_cancel, claim_task, list_tasks
-from ai_apitest.web.server import run_task_by_id
+from iatest.core.config import load_config, save_config
+from iatest.core.models import Endpoint, TestCase as Case, Assertion, CaseResult
+from iatest.core.paths import project_metadata_file
+from iatest.core.serde import write_json, case_from_dict
+from iatest.core.schema import schema_errors
+from iatest.core.redaction import redact
+from iatest.data.generation_cache import IncrementalGenerationCache
+from iatest.generator.cases import generate_cases
+from iatest.domain.contracts import normalize_business_rules
+from iatest.execution.fixture_checks import check_fixtures
+from iatest.execution.runner import run_ordered_cases
+from iatest.execution.options import RunOptions
+from iatest.context.storage import save_execution_trend, trend_overview, assess_trend_comparability
+from iatest.report.storage import save_run
+from iatest.orchestrator.maintainer.change_detector import endpoint_signature
+from iatest.web.task_store import create_task, request_cancel, claim_task, list_tasks
+from iatest.web.server import run_task_by_id
 
 
 def endpoint(path):
@@ -63,7 +63,7 @@ def test_cache_invalidates_dependencies_but_reuses_independent_endpoints(tmp_pat
 
 
 def test_incremental_workflow_regenerates_only_changed_scope(tmp_path, monkeypatch):
-    import ai_apitest.ai.workflows as workflows
+    import iatest.ai.workflows as workflows
     config = load_config(tmp_path)
     config["quality_audit"]["enabled"] = False
     save_config(tmp_path, config)
@@ -103,7 +103,7 @@ def test_fixture_check_is_read_only_until_probe_or_exercise():
 
 def test_fixture_examples_control_time_mail_and_clean_up_over_real_http():
     import importlib.util
-    path = Path(__file__).resolve().parents[1] / "examples" / "test_support_server.py"
+    path = Path(__file__).resolve().parents[1] / "examples" / "api_support_service.py"
     spec = importlib.util.spec_from_file_location("iatest_support_demo", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -168,7 +168,7 @@ def test_schema_definition_survives_redaction_and_remote_refs_fail_closed():
 
 
 def test_new_safety_flags_require_boolean_values(tmp_path):
-    from ai_apitest.execution.datasets import expand_cases
+    from iatest.execution.datasets import expand_cases
     with pytest.raises(ValueError, match="布尔"):
         expand_cases([case_from_dict({"id": "C1", "title": "C1", "method": "GET", "path": "/", "retry_safe": "false"})], tmp_path, {})
     with pytest.raises(ValueError):
@@ -184,7 +184,7 @@ def test_corrupt_incremental_cache_is_treated_as_a_miss(tmp_path):
 
 
 def test_distinct_identities_and_dataset_inputs_are_not_deduplicated():
-    from ai_apitest.domain.case_drafts import case_execution_signature, case_request_signature
+    from iatest.domain.case_drafts import case_execution_signature, case_request_signature
     first = Case("C1", "C1", "GET", "/data", query={"id": "{{id}}"}, variables={"id": 1})
     second = copy.deepcopy(first)
     second.variables["id"] = 2
@@ -195,7 +195,7 @@ def test_distinct_identities_and_dataset_inputs_are_not_deduplicated():
 
 
 def test_web_edit_preserves_and_updates_execution_options():
-    from ai_apitest.web.server import case_from_form, render_case_edit_dialog
+    from iatest.web.server import case_from_form, render_case_edit_dialog
     existing = Case("C1", "C1", "GET", "/data", expected_result="返回200", variables={"id": 1}, identity="reader")
     form = {"title": ["changed"], "expected_result": ["返回200"], "runnable": ["on"], "assertions": [json.dumps([{"type": "status_code", "expected": 200}])], "request_data": [json.dumps({"identity": "admin", "variables": {"id": 2}, "poll": {"timeout_seconds": 3}})]}
     edited = case_from_form(existing, form)
@@ -205,8 +205,8 @@ def test_web_edit_preserves_and_updates_execution_options():
 
 
 def test_execution_credit_is_invalidated_when_cases_or_contracts_change(tmp_path):
-    from ai_apitest.report.storage import current_run_results
-    from ai_apitest.execution.provenance import run_metadata
+    from iatest.report.storage import current_run_results
+    from iatest.execution.provenance import run_metadata
     case = Case("C1", "C1", "GET", "/a")
     write_json(project_metadata_file(tmp_path, "demo"), {})
     metadata = run_metadata(tmp_path, "demo", {"base_url": "https://test.invalid"}, [case], RunOptions(), "seed")
@@ -215,7 +215,7 @@ def test_execution_credit_is_invalidated_when_cases_or_contracts_change(tmp_path
     changed = copy.deepcopy(case)
     changed.query = {"limit": 10}
     assert not current_run_results(tmp_path, "demo", [changed])
-    from ai_apitest.core.paths import project_docs_file
+    from iatest.core.paths import project_docs_file
     write_json(project_docs_file(tmp_path, "demo"), [{"method": "GET", "path": "/a", "description": "changed"}])
     assert not current_run_results(tmp_path, "demo", [case])
 

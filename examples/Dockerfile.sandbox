@@ -5,4 +5,4 @@ RUN python -m pip install --no-cache-dir /tmp/wheels/*.whl && rm -r /tmp/wheels
 ENV PYTHONDONTWRITEBYTECODE=1
 USER 65532:65532
 WORKDIR /tmp
-ENTRYPOINT ["python", "-I", "-B", "-m", "ai_apitest.execution.worker"]
+ENTRYPOINT ["python", "-I", "-B", "-m", "iatest.execution.worker"]

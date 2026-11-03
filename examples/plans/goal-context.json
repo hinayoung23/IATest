@@ -1,0 +1,16 @@
+{
+  "start_url": "http://127.0.0.1:8767/ui",
+  "allowed_origins": ["http://127.0.0.1:8767"],
+  "data_generation": {
+    "nickname": {"kind": "string", "minLength": 16, "maxLength": 20, "unique": true, "prefix": "test-"}
+  },
+  "rules": {"nickname_contract": "保存并刷新后，昵称应等于 nickname"},
+  "cleanup_plan": {
+    "id": "nickname-cleanup",
+    "kind": "api",
+    "spec": {
+      "allowed_origins": ["http://127.0.0.1:8767"],
+      "requests": [{"url": "http://127.0.0.1:8767/cleanup", "method": "POST"}]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "connection": {
+    "endpoint": "http://127.0.0.1:19430",
+    "binding_id": "owned-iphone-cable",
+    "token_env": "IATEST_USB_HID_TOKEN"
+  },
+  "commands": [
+    {
+      "op": "move",
+      "dx": 20,
+      "dy": 0
+    },
+    {
+      "op": "click",
+      "button": "left"
+    },
+    {
+      "op": "text",
+      "text": "hello"
+    },
+    {
+      "op": "key",
+      "usage": 40
+    }
+  ]
+}

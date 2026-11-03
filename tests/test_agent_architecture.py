@@ -7,15 +7,15 @@ from typing import Any
 
 import pytest
 
-from ai_apitest.agents.identity import RoleRegistry, RoleSpec, UnknownRoleError, default_role_registry
-from ai_apitest.agents.runtime import (
+from iatest.agents.identity import RoleRegistry, RoleSpec, UnknownRoleError, default_role_registry
+from iatest.agents.runtime import (
     AgentBudgetExceeded,
     AgentRuntime,
     compact_agent_history,
     uses_kimi_thinking_protocol,
 )
-from ai_apitest.ai.model_gateway import ProviderModelGateway, parse_tool_envelope
-from ai_apitest.ai.provider import (
+from iatest.ai.model_gateway import ProviderModelGateway, parse_tool_envelope
+from iatest.ai.provider import (
     ModelResponse,
     ModelToolCall,
     TokenUsage,
@@ -23,7 +23,7 @@ from ai_apitest.ai.provider import (
     parse_openai_tool_calls,
     to_anthropic_messages,
 )
-from ai_apitest.application.case_generation import (
+from iatest.application.case_generation import (
     PLANNER_TOOLS,
     apply_plan_contract_fields,
     dedupe_cases,
@@ -33,32 +33,32 @@ from ai_apitest.application.case_generation import (
     plan_batches,
     supplement_cases_with_agent_runtime,
 )
-from ai_apitest.application.discovery import (
+from iatest.application.discovery import (
     discover_endpoints_with_agent_runtime,
     generate_dependency_graph_with_agent_runtime,
 )
-from ai_apitest.application.case_maintenance import maintain_cases_with_agent_runtime
-from ai_apitest.application.quality_audit import (
+from iatest.application.case_maintenance import maintain_cases_with_agent_runtime
+from iatest.application.quality_audit import (
     QualityAuditService,
     calibrate_review_result,
     review_rubric_violations,
     unique_audit_models,
 )
-from ai_apitest.application.result_analysis import result_cleanup_status, skipped_case_summary
-from ai_apitest.ai.workflows import case_generation_strategy_context
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import Assertion, CaseResult, Endpoint, TestCase as ApiTestCase, TestStep as ApiTestStep
-from ai_apitest.core.paths import project_docs_file
-from ai_apitest.core.serde import to_jsonable, write_json
-from ai_apitest.data.agent_runs import AgentRunRepository, redact_sensitive, redact_text
-from ai_apitest.data.repositories import ProjectDataAccess
-from ai_apitest.domain.case_drafts import compile_scenario_drafts, normalize_chain_step, validate_compiled_cases
-from ai_apitest.domain.coverage import (
+from iatest.application.result_analysis import result_cleanup_status, skipped_case_summary
+from iatest.ai.workflows import case_generation_strategy_context
+from iatest.core.config import load_config, save_config
+from iatest.core.models import Assertion, CaseResult, Endpoint, TestCase as ApiTestCase, TestStep as ApiTestStep
+from iatest.core.paths import project_docs_file
+from iatest.core.serde import to_jsonable, write_json
+from iatest.data.agent_runs import AgentRunRepository, redact_sensitive, redact_text
+from iatest.data.repositories import ProjectDataAccess
+from iatest.domain.case_drafts import compile_scenario_drafts, normalize_chain_step, validate_compiled_cases
+from iatest.domain.coverage import (
     business_rule_plan_item,
     fill_deterministic_coverage_gaps,
     normalize_coverage_plan,
 )
-from ai_apitest.domain.contracts import (
+from iatest.domain.contracts import (
     assertion_satisfies_obligation,
     contract_catalog_issues,
     coverage_manifest_issues,
@@ -66,11 +66,11 @@ from ai_apitest.domain.contracts import (
     normalize_business_rules,
     normalize_endpoint_contract,
 )
-from ai_apitest.discovery.document import parse_api_document
-from ai_apitest.execution.assertions import evaluate
-from ai_apitest.generator.cases import attach_setup_steps, load_cases_from_markdown, save_cases
-from ai_apitest.tools.builtin import build_case_generation_tool_registry
-from ai_apitest.tools.registry import (
+from iatest.discovery.document import parse_api_document
+from iatest.execution.assertions import evaluate
+from iatest.generator.cases import attach_setup_steps, load_cases_from_markdown, save_cases
+from iatest.tools.builtin import build_case_generation_tool_registry
+from iatest.tools.registry import (
     ToolExecutionContext,
     ToolExecutionResult,
     ToolInputError,
@@ -78,7 +78,7 @@ from ai_apitest.tools.registry import (
     ToolRegistry,
     ToolSpec,
 )
-from ai_apitest.web.server import llm_role_from_form, render_config
+from iatest.web.server import llm_role_from_form, render_settings
 
 
 def test_role_registry_is_versioned_and_fails_closed() -> None:
@@ -601,7 +601,7 @@ def test_negative_case_normalization_adds_negative_tag() -> None:
         tags=["status_code_coverage"],
     )
 
-    from ai_apitest.core.case_schema import normalize_test_case
+    from iatest.core.case_schema import normalize_test_case
 
     normalized = normalize_test_case(case)
 
@@ -3575,7 +3575,7 @@ def test_provider_gateway_forwards_forced_terminal_tool_choice(monkeypatch) -> N
         captured.update(kwargs)
         return ModelResponse(text="", tool_calls=[], usage=TokenUsage(), finish_reason="stop")
 
-    monkeypatch.setattr("ai_apitest.ai.model_gateway.model_completion", fake_completion)
+    monkeypatch.setattr("iatest.ai.model_gateway.model_completion", fake_completion)
     gateway = ProviderModelGateway(
         {
             "provider": "openai-compatible",
@@ -4196,7 +4196,7 @@ def test_quality_audit_enforces_strict_gates_and_retries_judge_independently(
         "issues": [],
     }
     monkeypatch.setattr(
-        "ai_apitest.application.quality_audit.review_quality_with_agent_runtime",
+        "iatest.application.quality_audit.review_quality_with_agent_runtime",
         lambda *args, **kwargs: exact_85,
     )
     strict_service = QualityAuditService(tmp_path, "demo", "endpoint_catalog")
@@ -4235,7 +4235,7 @@ def test_quality_audit_enforces_strict_gates_and_retries_judge_independently(
         ],
     }
     monkeypatch.setattr(
-        "ai_apitest.application.quality_audit.review_quality_with_agent_runtime",
+        "iatest.application.quality_audit.review_quality_with_agent_runtime",
         lambda *args, **kwargs: critical_review,
     )
     critical_service = QualityAuditService(tmp_path, "critical", "endpoint_catalog")
@@ -4268,7 +4268,7 @@ def test_quality_audit_enforces_strict_gates_and_retries_judge_independently(
         }
 
     monkeypatch.setattr(
-        "ai_apitest.application.quality_audit.review_quality_with_agent_runtime",
+        "iatest.application.quality_audit.review_quality_with_agent_runtime",
         flaky_review,
     )
     retry_service = QualityAuditService(tmp_path, "retry", "endpoint_catalog")
@@ -4283,7 +4283,7 @@ def test_quality_audit_enforces_strict_gates_and_retries_judge_independently(
 
 
 def test_quality_audit_detail_page_shows_per_model_reasons(tmp_path, monkeypatch) -> None:
-    from ai_apitest.web.server import render_quality_audit_detail
+    from iatest.web.server import render_quality_audit_detail
 
     config = load_config(tmp_path)
     config["llm"]["master"].update(
@@ -4297,7 +4297,7 @@ def test_quality_audit_detail_page_shows_per_model_reasons(tmp_path, monkeypatch
     )
     save_config(tmp_path, config)
     monkeypatch.setattr(
-        "ai_apitest.application.quality_audit.review_quality_with_agent_runtime",
+        "iatest.application.quality_audit.review_quality_with_agent_runtime",
         lambda *args, **kwargs: {
             "dimension_scores": {
                 "reliability": 96,
@@ -5006,7 +5006,7 @@ def test_web_and_llm_config_expose_agent_runtime_without_losing_capabilities(tmp
     )
     assert updated["context_window"] == 64000
     assert updated["supports_tools"] is True
-    page = render_config(tmp_path, "demo", type("Parsed", (), {"query": ""})())
+    page = render_settings(tmp_path, "demo", type("Parsed", (), {"query": ""})())
     assert "Agent Runtime" in page
     assert "Agent 模式" in page
     assert "Legacy 模式" in page

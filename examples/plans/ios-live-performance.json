@@ -1,0 +1,9 @@
+{
+  "id": "ios-profile-journey", "kind": "client_performance", "budget": {"timeout_seconds": 300},
+  "spec": {
+    "platform": "ios", "iterations": 2, "warmup": 1,
+    "ios_capture": {"mode": "attach", "target_pid": 777, "duration_seconds": 60, "ready_timeout_seconds": 20, "max_trace_bytes": 268435456},
+    "plan": {"id": "check-ready", "kind": "ios", "spec": {"profile": "ios-local", "steps": [{"op": "expect", "target": {"text": "Ready"}, "attribute": "exists", "expected": true}]}},
+    "thresholds": {"max_cpu_percent": 80, "max_memory_footprint_kb": 200000}
+  }
+}

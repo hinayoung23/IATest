@@ -1,595 +1,181 @@
+<div align="center">
+
 # IATest
 
-AI-driven API test automation for discovering APIs, generating test cases, running tests, reviewing results, and managing reusable project knowledge.
+### Describe the goal. Explore the app. Verify the outcome.
 
-AI 驱动的接口自动化测试框架，用于识别接口、生成用例、执行测试、分析报告和管理项目经验。
+AI-driven testing for APIs, browsers, desktop and mobile apps — with performance, security, data and protocol checks in the same workflow.
 
-[English](#english) | [中文](#中文)
+[![PyPI](https://img.shields.io/pypi/v/iatest-framework)](https://pypi.org/project/iatest-framework/)
+[![Python](https://img.shields.io/pypi/pyversions/iatest-framework)](https://pypi.org/project/iatest-framework/)
+[![Tests](https://github.com/hinayoung23/IATest/actions/workflows/test.yml/badge.svg)](https://github.com/hinayoung23/IATest/actions/workflows/test.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
----
+English · [简体中文](README.zh-CN.md)
 
-## English
+[Quick start](#quick-start) · [How it works](#how-it-works) · [What you can test](#what-you-can-test) · [Examples](#examples) · [FAQ](#faq) · [Documentation](docs/README.md)
 
-### What you can do
+</div>
 
-- Import OpenAPI 3.x, Swagger 2.0, Markdown, or HTML API documentation.
-- Generate and maintain API test cases.
-- Run smoke, full, or selected test cases.
-- View reports and recent execution trends.
-- Use the local Web console in English, Simplified Chinese, Japanese, French, or Russian.
-- Connect project-provided test fixtures and run a local dependency Mock server.
-- Use datasets, constrained runtime data, and failed-input replay.
-- Inspect agent and Token usage, and query project artifacts through read-only MCP tools.
+IATest turns a business goal into an observed UI journey, independent replay and a reusable test plan. It also imports API contracts, runs bounded load and security checks, validates data and messages, and connects those tests into larger business workflows.
 
-### Requirements
+Use the local Web console or CLI. Keep goals, cases, plans, rules and measurement assets together. Review original assertions and evidence alongside any AI explanation.
 
-- Python 3.11 or later
+![IATest workflow: goal, exploration, independent replay, reusable assets and results](https://raw.githubusercontent.com/hinayoung23/IATest/v2.0.0/docs/assets/workflow.svg)
 
-### Install
+## Quick start
 
-Install from PyPI:
+Requires **Python 3.11+**. Extra tools depend on the target you test.
 
-```bash
-python -m pip install iatest-framework
+```sh
+python -m pip install "iatest-framework==2.0.0"
+mkdir my-tests
+cd my-tests
+iatest init --project demo
+iatest web --project demo
 ```
 
-For source development, clone the repository and run `python -m pip install -e .` from its root directory.
+Open **http://127.0.0.1:8765**. In **Settings**, configure your model and environment-variable references. Then open **Test workspace → UI & interaction**:
 
-Confirm that the command is available:
+1. Choose a browser, Android, iPhone/iPad or desktop target.
+2. Describe the business goal and a concrete expected outcome.
+3. Start AI goal exploration and review the independent replay results.
+4. Open the saved case and plan in **Test assets → UI tests**.
 
-```bash
-iatest --help
-```
+For example:
 
-### Quick start
+> Set the nickname to “Test User”, save it, then reload the page. The test passes only if the nickname still equals “Test User”.
 
-#### 1. Initialize a project
+No selectors or complete click script are required for this entry path. You supply the target and trusted expectation; IATest discovers the steps. Starting exploration uses the configured model and acts on the target application.
 
-```bash
-iatest init --project my-project
-```
+Browsers need an installed Chromium-family browser or a supported WebDriver backend. Native mobile and desktop tests need the platform tools and permissions in the [environment guide](docs/reference/environment.md).
 
-This creates `iatest.json` and the project directories under `projects/my-project/`.
+### Run a test without an AI model
 
-#### 2. Configure an LLM and the test environment
-
-Edit `iatest.json`:
+Create `records.json`:
 
 ```json
 {
-  "llm": {
-    "master": {
-      "enabled": true,
-      "provider": "openai-compatible",
-      "base_url": "https://llm.example.com/v1",
-      "model": "your-model",
-      "api_key_env": "IATEST_LLM_API_KEY",
-      "supports_tools": true
-    }
-  },
-  "environments": {
-    "local": {
-      "base_url": "http://127.0.0.1:8000",
-      "headers": {}
-    }
-  },
-  "default_environment": "local"
-}
-```
-
-Set the API key in your shell or in a local `.env` file:
-
-```bash
-export IATEST_LLM_API_KEY=your-api-key
-```
-
-`case_generator` and `analyzer` are optional. If they are not configured, IATest reuses `master`.
-
-You can also edit and test all three model connections from **Settings → LLM Configuration** in the Web console.
-
-#### 3. Choose the CLI artifact language
-
-New CLI-generated artifacts use English by default.
-
-```bash
-iatest language
-iatest language fr
-```
-
-Supported codes are `en`, `zh`, `ja`, `fr`, and `ru`. Changing the language only affects new test cases, experiences, and reports. Existing content is not translated.
-
-Operations started from the Web console use the current Web interface language instead of the CLI setting.
-
-#### 4. Import API documentation
-
-From a local file:
-
-```bash
-iatest discover ./api-docs/openapi.yaml --project my-project
-```
-
-From a URL:
-
-```bash
-iatest discover https://example.com/openapi.json --project my-project
-```
-
-#### 5. Generate test cases
-
-```bash
-iatest generate --project my-project
-```
-
-Force regeneration instead of reusing a valid cache:
-
-```bash
-iatest generate --project my-project --force
-```
-
-#### 6. Run test cases
-
-Run all applicable cases:
-
-```bash
-iatest run --project my-project
-```
-
-Run selected case IDs:
-
-```bash
-iatest run --project my-project --cases TC-API-0001,TC-API-0002
-```
-
-Temporarily override the configured target base URL:
-
-```bash
-iatest run --project my-project --base-url http://127.0.0.1:9000
-```
-
-#### 7. Start the Web console
-
-```bash
-iatest web --project my-project
-```
-
-Open [http://127.0.0.1:8765](http://127.0.0.1:8765).
-
-The Web console provides:
-
-- Dashboard and project switching.
-- API source import and API editing.
-- Test-case generation, supplemental generation, editing, execution, and scheduling.
-- Per-item and bulk deletion for test cases and reports.
-- Report details and execution trends.
-- Project knowledge review, search, confirmation, ignore, keep, and merge actions.
-- LLM, generation strategy, execution strategy, fixture, Mock, and governance settings.
-- A language selector for English, Chinese, Japanese, French, and Russian.
-
-### External test capabilities
-
-Some documented scenarios need capabilities that belong to the tested project, such as server-time control, controlled email delivery, or reserved test data. IATest does not create these capabilities automatically.
-
-If a required capability is not connected, the case remains visible for coverage but is recorded as `skipped`. Connect it in `iatest.json` or from **Settings → Project-provided Test Capabilities**.
-
-Static value provider:
-
-```json
-{
-  "fixtures": {
-    "providers": {
-      "restricted_prefix": {
-        "enabled": true,
-        "type": "static",
-        "values": {
-          "prefix": "admin"
-        }
-      }
-    }
+  "id": "unique-records",
+  "kind": "data",
+  "spec": {
+    "records": [{"id": 1}, {"id": 2}],
+    "checks": [{"id": "unique-id", "rule": "unique", "path": "$.id"}]
   }
 }
 ```
 
-HTTP prepare and cleanup provider:
-
-```json
-{
-  "fixtures": {
-    "timeout_seconds": 10,
-    "providers": {
-      "mail_injection": {
-        "enabled": true,
-        "type": "http",
-        "prepare": {
-          "method": "POST",
-          "url": "http://127.0.0.1:9000/test-support/mail",
-          "json": {"email": "{{email}}"},
-          "expected_status": 201,
-          "extract": {"fixture_token": "$.fixture_token"}
-        },
-        "cleanup": {
-          "method": "POST",
-          "url": "http://127.0.0.1:9000/test-support/mail/cleanup",
-          "json": {"token": "{{fixture_token}}"},
-          "expected_status": 204
-        }
-      }
-    }
-  }
-}
+```sh
+iatest test import-plan records.json --project demo
+iatest test run unique-records --project demo
+iatest test reports --project demo
 ```
 
-Fixture preparation and cleanup are deterministic local operations and do not call an LLM.
+Saved deterministic plans run without model calls. AI is used when you request exploration, generation, visual assistance or evidence analysis.
 
-### Dependency Mock server
+## How it works
 
-The Mock server is intended for upstream dependencies of the system under test. It does not replace the tested API itself.
+**Goal → observed actions → independent replay → reusable assets → evidence.**
 
-Example configuration:
 
-```json
-{
-  "mock": {
-    "host": "127.0.0.1",
-    "port": 8780,
-    "max_request_bytes": 1000000,
-    "max_history": 200,
-    "routes": [
-      {
-        "name": "upstream-user-error",
-        "method": "GET",
-        "path": "/upstream/users/{user_id}",
-        "match": {"query": {"mode": "failure"}},
-        "response": {
-          "status": 503,
-          "headers": {"X-Mock": "iatest"},
-          "body": {"user": "{{user_id}}", "error": "upstream unavailable"}
-        }
-      }
-    ]
-  }
-}
+- **Declare the outcome.** Checks cite your goal and trusted rules before state-changing actions. Current screen contents do not become the expected answer.
+- **Observe and explore.** Bounded native or browser tools locate controls and execute authorized actions. Manual step composition is also available.
+- **Replay independently.** UI exploration performs at least two fresh-session replays. Stable success and stable business failure are recorded separately; incomplete cases remain candidates.
+- **Reuse the plan.** Saved plans can run again, join workflows, execute on authorized nodes or become part of release verification.
+- **Keep the evidence.** Assertions, screenshots, measurements, errors and cleanup results remain distinct from model interpretations.
+
+The console separates **Test workspace**, **Devices & environments**, **Test assets**, **Runs & reports**, **Project knowledge** and **Settings**. The asset library treats UI, API, performance and security assets consistently, with filtering and links between goal cases and compiled plans.
+
+## What you can test
+
+| Target | Capabilities | Preparation |
+|---|---|---|
+| APIs | Contract import, AI-assisted case design, authentication, fixtures, data-driven cases, Mock and reports | Authorized HTTP service; a model for generation |
+| Browser UI | Goal exploration, native input, frames, pages, Shadow DOM, screenshots and visual targets | Installed browser/driver and explicit network policy |
+| Desktop apps | macOS AX, Windows UIAutomation, Linux AT-SPI; controls, keys, drag, scroll and screenshots | Running app, app/process identity and accessibility permissions |
+| Android | Native input, IME, gestures, WebView, video, app delivery and scoped metrics | Android SDK/JDK, authorized ADB and framework components |
+| iOS | XCTest input, USB or TLS observation, WKWebView, video and explicit measurements | macOS/Xcode, developer mode and trusted signed Runner |
+| Performance | HTTP/transaction load, protocol sessions, LAN workers and client metric gates | Authorized environment, bounded load and compatible collectors |
+| Security & accessibility | Explicit authorization checks, rule-driven scans, automated accessibility checks and human review | Declared scope, identities and relevant review evidence |
+| Data & protocols | Read-only SQLite/PostgreSQL/MySQL, data quality, WebSocket, MQTT and structured gRPC | Authorized sources/services; optional database drivers |
+| Business workflows | Typed dependencies, concurrency, cleanup, resource ownership, remote nodes and release suites | Saved plans and explicit node/resource configuration |
+
+```sh
+iatest test capabilities
+iatest test doctor
+iatest mobile doctor
 ```
 
-Start it from the terminal:
+Platform support has specific boundaries. Safari uses an explicit navigation-only mode; some Apple raw collectors remain unreliable; BLE digitizer reports are experimental; physical phones do not provide full OS isolation. See the [capability matrix](docs/reference/capabilities.md) before selecting a backend.
 
-```bash
-iatest mock --project my-project
+### Optional dependencies
+
+```sh
+# PostgreSQL/MySQL drivers and SQL authorization checks
+python -m pip install "iatest-framework[database]==2.0.0"
+
+# Pinyin support for the optional HID Chinese-input channel
+python -m pip install "iatest-framework[hid]==2.0.0"
 ```
 
-You can also save the configuration and turn the listening port on or off from **Settings → API Mock**. The Mock listener is off by default and stops when the Web process exits.
+These extras do not install browsers, Android SDKs, Xcode or HID hardware.
 
-### Common commands
+## Examples
 
-```bash
-iatest init --project <name>
-iatest discover <source> --project <name>
-iatest generate --project <name>
-iatest run --project <name>
-iatest web --project <name>
-iatest mock --project <name>
-iatest language <en|zh|ja|fr|ru>
-iatest llm-check --base-url <url> --model <model>
-iatest agent-runs --project <name>
-iatest token-stats --project <name>
-iatest mcp
-iatest maintain --project <name> --source <source> --ai-update --write
-iatest context stats --project <name>
-iatest context govern --project <name>
-iatest context export --project <name>
-iatest context import <file.jsonl> --project <name>
+| Scenario | Start here |
+|---|---|
+| Explore a profile-editing UI | [UI goal lab](examples/ui_goal_lab.py) · [Goal exploration guide](docs/guides/goal-exploration.md) |
+| Combine UI, HTTP, performance and security | [Automation lab](examples/automation_lab.py) · [Test plans](examples/plans) |
+| Import an API contract | [API service](examples/api_service.py) · [OpenAPI contract](examples/api_contract.json) |
+| Configure a phone or emulator | [Device profiles](examples/devices) · [Mobile testing](docs/guides/mobile-testing.md) |
+| Work with measured data or HID | [Measurements](examples/measurements) · [HID examples](examples/hid) |
+
+The UI lab includes a deliberately broken save path for comparison. Demo services bind to loopback; replace their addresses and identities before testing your own environment. Examples are source-repository resources; installed users can start directly from the console or the JSON plan above.
+
+## FAQ
+
+**Do all tests need an AI model?**
+
+No. Saved plans and deterministic checks execute without a model. Exploration, generation and AI analysis require a compatible configured provider.
+
+**Is a finished task a passed test?**
+
+No. Task lifecycle and verdict are separate. Missing measurements, ambiguous targets, incomplete observation and unknown input delivery cannot pass. AI analysis does not replace the original verdict.
+
+**Is everything local?**
+
+The console, execution and asset storage run locally. Requested model operations send selected context, and explicitly enabled images, to your configured provider. Its data policy applies. Keep credentials in environment-variable references.
+
+**Do mobile tests need Appium or a jailbroken iPhone?**
+
+The framework owns its native drivers and does not require Appium. Standard iOS testing uses a signed XCTest Runner. Optional Android-to-iPhone Bluetooth HID and USB HID channels have their own setup and compatibility requirements.
+
+**Does installing the package complete device setup?**
+
+No. Browser drivers, mobile SDKs, signatures, native components, interactive desktops and hardware permissions are target-specific. Start with the environment and platform guides.
+
+**What changed in 2.0?**
+
+The Python package is now `iatest`; update imports and `python -m ai_apitest` to `python -m iatest`. The PyPI distribution remains `iatest-framework` and the command remains `iatest`. Examples and console filenames now describe the wider testing scope. See [release and migration notes](docs/releases/2.0.0.md).
+
+## Documentation
+
+- [Documentation index](docs/README.md) · [Getting started](docs/guides/getting-started.md) · [Web console](docs/guides/web-console.md)
+- [UI goal exploration](docs/guides/goal-exploration.md) · [Browser](docs/guides/browser-testing.md) · [Desktop](docs/guides/desktop-testing.md) · [Mobile](docs/guides/mobile-testing.md)
+- [Test plans & workflows](docs/guides/test-plans.md) · [Performance & security](docs/guides/performance-security.md) · [Data & protocols](docs/guides/data-protocol.md)
+- [Architecture](docs/design/architecture.md) · [Knowledge & agents](docs/guides/agent-data.md) · [Capability boundaries](docs/reference/capabilities.md)
+
+## Development
+
+```sh
+git clone https://github.com/hinayoung23/IATest.git
+cd IATest
+python -m venv .venv
+# Activate .venv using your shell's normal command.
+python -m pip install -e ".[test,database,hid]"
+python -m pytest -q
 ```
 
-Use `iatest <command> --help` for all options.
+Browser and native integration tests require their documented environments; skipped tests are not device acceptance. Generated projects, credentials, recordings and build products are excluded from source control and release packages. See [CONTRIBUTING](CONTRIBUTING.md) for layout and release checks.
 
-### Project output locations
-
-```text
-projects/<project>/api_docs/       Imported API information
-projects/<project>/test_cases/     Generated test cases
-projects/<project>/reports/        Test reports
-projects/<project>/context/        Context exports and audit snapshots
-projects/<project>/.iatest/        Local runtime databases and caches
-```
-
-Do not commit `.env` or plaintext API keys.
-
----
-
-## 中文
-
-### 可以完成什么
-
-- 导入 OpenAPI 3.x、Swagger 2.0、Markdown 或 HTML 接口文档。
-- 生成、补充和维护接口测试用例。
-- 执行冒烟、全量或指定用例。
-- 查看测试报告和最近执行趋势。
-- 使用支持英文、简体中文、日文、法文和俄文的本地 Web 控制台。
-- 接入项目方提供的外部测试能力，并启动本地依赖 Mock 服务。
-- 使用数据集、受约束的运行时数据生成和失败输入重放。
-- 查看 Agent 与 Token 用量，通过只读 MCP 工具查询项目产物。
-
-### 环境要求
-
-- Python 3.11 或更高版本
-
-### 安装
-
-从 PyPI 安装：
-
-```bash
-python -m pip install iatest-framework
-```
-
-如需参与源码开发，请克隆仓库，并在仓库根目录执行 `python -m pip install -e .`。
-
-确认命令已经可用：
-
-```bash
-iatest --help
-```
-
-### 快速开始
-
-#### 1. 初始化项目
-
-```bash
-iatest init --project my-project
-```
-
-该命令会创建 `iatest.json`，并在 `projects/my-project/` 下创建项目目录。
-
-#### 2. 配置大模型和测试环境
-
-编辑 `iatest.json`：
-
-```json
-{
-  "llm": {
-    "master": {
-      "enabled": true,
-      "provider": "openai-compatible",
-      "base_url": "https://llm.example.com/v1",
-      "model": "your-model",
-      "api_key_env": "IATEST_LLM_API_KEY",
-      "supports_tools": true
-    }
-  },
-  "environments": {
-    "local": {
-      "base_url": "http://127.0.0.1:8000",
-      "headers": {}
-    }
-  },
-  "default_environment": "local"
-}
-```
-
-在终端环境变量或本地 `.env` 文件中设置 API Key：
-
-```bash
-export IATEST_LLM_API_KEY=your-api-key
-```
-
-`case_generator` 和 `analyzer` 是可选配置；没有单独配置时会复用 `master`。
-
-也可以在 Web 控制台的“配置中心 → 大模型配置”中修改三个模型连接并测试连通性。
-
-#### 3. 选择终端产物语言
-
-终端新生成的产物默认使用英文。
-
-```bash
-iatest language
-iatest language zh
-```
-
-支持 `en`、`zh`、`ja`、`fr`、`ru`。切换后只影响新生成的用例、经验和报告，已有内容不会被翻译。
-
-从 Web 控制台发起的操作以当前 Web 页面语言为准，不使用终端语言设置。
-
-#### 4. 导入接口文档
-
-导入本地文件：
-
-```bash
-iatest discover ./api-docs/openapi.yaml --project my-project
-```
-
-导入在线文档：
-
-```bash
-iatest discover https://example.com/openapi.json --project my-project
-```
-
-#### 5. 生成测试用例
-
-```bash
-iatest generate --project my-project
-```
-
-忽略有效缓存并强制重新生成：
-
-```bash
-iatest generate --project my-project --force
-```
-
-#### 6. 执行测试用例
-
-执行当前范围内的全部适用用例：
-
-```bash
-iatest run --project my-project
-```
-
-执行指定用例：
-
-```bash
-iatest run --project my-project --cases TC-API-0001,TC-API-0002
-```
-
-临时覆盖配置中的被测接口基础地址：
-
-```bash
-iatest run --project my-project --base-url http://127.0.0.1:9000
-```
-
-#### 7. 启动 Web 控制台
-
-```bash
-iatest web --project my-project
-```
-
-浏览器打开 [http://127.0.0.1:8765](http://127.0.0.1:8765)。
-
-Web 控制台提供：
-
-- 仪表盘和项目切换。
-- 接口来源导入以及接口新增、编辑和删除。
-- 用例生成、补充、编辑、执行和定时任务。
-- 用例和报告的单条删除、勾选多条批量删除。
-- 报告详情和执行趋势。
-- 项目经验搜索、确认、忽略、保留和合并。
-- 大模型、生成策略、执行策略、外部能力、Mock 和治理配置。
-- 英文、中文、日文、法文和俄文切换。
-
-### 接入项目方外部测试能力
-
-部分文档场景依赖被测项目提供的服务端时间控制、受控邮件投递或特殊测试数据。IATest 不会自动创建这些能力。
-
-能力尚未接入时，用例仍会保留以体现覆盖情况，但执行结果记录为 `skipped`。可以修改 `iatest.json`，或在“配置中心 → 项目方外部测试能力”中接入。
-
-静态变量提供者：
-
-```json
-{
-  "fixtures": {
-    "providers": {
-      "restricted_prefix": {
-        "enabled": true,
-        "type": "static",
-        "values": {
-          "prefix": "admin"
-        }
-      }
-    }
-  }
-}
-```
-
-HTTP 准备与清理提供者：
-
-```json
-{
-  "fixtures": {
-    "timeout_seconds": 10,
-    "providers": {
-      "mail_injection": {
-        "enabled": true,
-        "type": "http",
-        "prepare": {
-          "method": "POST",
-          "url": "http://127.0.0.1:9000/test-support/mail",
-          "json": {"email": "{{email}}"},
-          "expected_status": 201,
-          "extract": {"fixture_token": "$.fixture_token"}
-        },
-        "cleanup": {
-          "method": "POST",
-          "url": "http://127.0.0.1:9000/test-support/mail/cleanup",
-          "json": {"token": "{{fixture_token}}"},
-          "expected_status": 204
-        }
-      }
-    }
-  }
-}
-```
-
-外部能力的准备和清理都是本地确定性操作，不会调用大模型。
-
-### 接口 Mock
-
-Mock 服务用于模拟被测系统依赖的上游服务，不能用来替代被测接口本身。
-
-配置示例：
-
-```json
-{
-  "mock": {
-    "host": "127.0.0.1",
-    "port": 8780,
-    "max_request_bytes": 1000000,
-    "max_history": 200,
-    "routes": [
-      {
-        "name": "upstream-user-error",
-        "method": "GET",
-        "path": "/upstream/users/{user_id}",
-        "match": {"query": {"mode": "failure"}},
-        "response": {
-          "status": 503,
-          "headers": {"X-Mock": "iatest"},
-          "body": {"user": "{{user_id}}", "error": "upstream unavailable"}
-        }
-      }
-    ]
-  }
-}
-```
-
-通过终端启动：
-
-```bash
-iatest mock --project my-project
-```
-
-也可以在“配置中心 → 接口 Mock”中保存配置并开启或关闭监听。Mock 监听默认关闭，并随 Web 进程退出而停止。
-
-### 常用命令
-
-```bash
-iatest init --project <name>
-iatest discover <source> --project <name>
-iatest generate --project <name>
-iatest run --project <name>
-iatest web --project <name>
-iatest mock --project <name>
-iatest language <en|zh|ja|fr|ru>
-iatest llm-check --base-url <url> --model <model>
-iatest agent-runs --project <name>
-iatest token-stats --project <name>
-iatest mcp
-iatest maintain --project <name> --source <source> --ai-update --write
-iatest context stats --project <name>
-iatest context govern --project <name>
-iatest context export --project <name>
-iatest context import <file.jsonl> --project <name>
-```
-
-使用 `iatest <command> --help` 查看完整参数。
-
-执行默认启用文件和网络访问策略；可用 `iatest run --isolation process` 启用独立进程和强制超时。Web 同样支持选择执行隔离；容器模式、访问白名单和插件配置见 [执行隔离说明](docs/sandbox.md)。
-
-### 项目产物位置
-
-```text
-projects/<project>/api_docs/       接口识别结果
-projects/<project>/test_cases/     测试用例
-projects/<project>/reports/        测试报告
-projects/<project>/context/        上下文导出和审计快照
-projects/<project>/.iatest/        本地运行数据库和缓存
-```
-
-不要提交 `.env` 或明文 API Key。
-
-## Documentation / 使用文档
-
-- [Execution, datasets, authentication and plugins / 执行、数据集、鉴权与插件](docs/framework-improvements.md)
-- [Runtime data, agent evaluation, recovery and MCP / 运行时数据、Agent 评测、恢复与 MCP](docs/agent-data-evolution.md)
-- [Token optimization and usage statistics / Token 优化与用量统计](docs/agent-data-evolution.md#模型无关的-token-优化)
-- [Case format / 用例格式](docs/case-format-spec.md)
-- [Execution isolation and access policies / 执行隔离与访问策略](docs/sandbox.md)
-
-## License
-
-Apache-2.0
+Licensed under [Apache-2.0](LICENSE).

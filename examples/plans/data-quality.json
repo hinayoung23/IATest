@@ -1,0 +1,7 @@
+{
+  "id": "data-quality", "kind": "data",
+  "spec": {"records": [{"id": 1}, {"id": 2}], "checks": [
+    {"id": "unique-id", "rule": "unique", "path": "$.id"},
+    {"id": "row-count", "rule": "count", "min": 2, "max": 2}
+  ]}
+}

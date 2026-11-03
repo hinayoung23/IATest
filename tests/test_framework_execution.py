@@ -10,27 +10,27 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from ai_apitest.cli import app
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import Assertion, TestCase as Case, TestStep as Step, CaseResult
-from ai_apitest.core.redaction import redact
-from ai_apitest.core.sampling import sample_from_schema
-from ai_apitest.core.schema import schema_errors
-from ai_apitest.core.serde import write_json
-from ai_apitest.core.paths import project_metadata_file, project_docs_file
-from ai_apitest.discovery.openapi import parse_openapi
-from ai_apitest.execution.assertions import evaluate
-from ai_apitest.execution.auth import AuthManager
-from ai_apitest.execution.control import ExecutionRuntime, RunControl, activate
-from ai_apitest.execution.datasets import expand_cases, seeded_variables
-from ai_apitest.execution.fixtures import FixtureManager
-from ai_apitest.execution.options import RunOptions
-from ai_apitest.execution.plugins import PluginRegistry
-from ai_apitest.execution.runner import execute_step, run_ordered_cases, run_cases
-from ai_apitest.generator.cases import save_cases
-from ai_apitest.report.export import execution_metrics, write_json_results, write_junit
-from ai_apitest.report.markdown import render_report_markdown
-from ai_apitest.report.storage import latest_run_metadata, latest_case_results
+from iatest.cli import app
+from iatest.core.config import load_config, save_config
+from iatest.core.models import Assertion, TestCase as Case, TestStep as Step, CaseResult
+from iatest.core.redaction import redact
+from iatest.core.sampling import sample_from_schema
+from iatest.core.schema import schema_errors
+from iatest.core.serde import write_json
+from iatest.core.paths import project_metadata_file, project_docs_file
+from iatest.discovery.openapi import parse_openapi
+from iatest.execution.assertions import evaluate
+from iatest.execution.auth import AuthManager
+from iatest.execution.control import ExecutionRuntime, RunControl, activate
+from iatest.execution.datasets import expand_cases, seeded_variables
+from iatest.execution.fixtures import FixtureManager
+from iatest.execution.options import RunOptions
+from iatest.execution.plugins import PluginRegistry
+from iatest.execution.runner import execute_step, run_ordered_cases, run_cases
+from iatest.generator.cases import save_cases
+from iatest.report.export import execution_metrics, write_json_results, write_junit
+from iatest.report.markdown import render_report_markdown
+from iatest.report.storage import latest_run_metadata, latest_case_results
 
 
 ENV = {"name": "test", "base_url": "https://test.invalid", "headers": {}}
@@ -251,7 +251,7 @@ def test_plugin_hooks_assertion_and_fixture_lifecycle():
 
 
 def test_selected_environment_provenance_and_ci_exit_codes(tmp_path, monkeypatch):
-    import ai_apitest.execution.runner as runner
+    import iatest.execution.runner as runner
     original_client = httpx.Client
     urls = []
     def handler(request):
@@ -305,7 +305,7 @@ def test_anonymous_case_does_not_inherit_default_auth_and_named_identity_wins():
 
 @pytest.mark.parametrize("body,valid", [(b"null", True), (b"not json", False), (b"", False)])
 def test_schema_assertions_distinguish_json_null_from_invalid_response(body, valid):
-    from ai_apitest.execution.runner import parse_response
+    from iatest.execution.runner import parse_response
     result = evaluate(Assertion("json_schema", expected={"type": "null"}), parse_response(200, {}, body))
     assert (result is None) is valid
 

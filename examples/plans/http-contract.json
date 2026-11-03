@@ -1,0 +1,6 @@
+{
+  "id": "http-contract", "kind": "protocol",
+  "spec": {"allowed_origins": ["http://127.0.0.1:8767"], "checks": [
+    {"id": "headers", "request": {"url": "http://127.0.0.1:8767/health"}, "headers": {"x-content-type-options": "nosniff"}}
+  ]}
+}

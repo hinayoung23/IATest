@@ -6,16 +6,16 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import Assertion, CaseResult, Endpoint, TestCase as ApiTestCase, TestStep as ApiTestStep
-from ai_apitest.core.paths import project_coverage_manifest_file, project_docs_file, project_reports_dir
-from ai_apitest.core.serde import assertion_from_dict, case_from_dict, to_jsonable, write_json
-from ai_apitest.ai.case_generation import supplement_user_prompt, user_prompt, validate_cases
-from ai_apitest.ai.workflows import dedupe_supplemental_cases
-from ai_apitest.context.injection import build_context_bundle, calculate_injection_budget
-from ai_apitest.context.extraction import process_report_analysis, retry_due_report_extractions
-from ai_apitest.context.signatures import is_contradictory
-from ai_apitest.context.storage import (
+from iatest.core.config import load_config, save_config
+from iatest.core.models import Assertion, CaseResult, Endpoint, TestCase as ApiTestCase, TestStep as ApiTestStep
+from iatest.core.paths import project_coverage_manifest_file, project_docs_file, project_reports_dir
+from iatest.core.serde import assertion_from_dict, case_from_dict, to_jsonable, write_json
+from iatest.ai.case_generation import supplement_user_prompt, user_prompt, validate_cases
+from iatest.ai.workflows import dedupe_supplemental_cases
+from iatest.context.injection import build_context_bundle, calculate_injection_budget
+from iatest.context.extraction import process_report_analysis, retry_due_report_extractions
+from iatest.context.signatures import is_contradictory
+from iatest.context.storage import (
     apply_conflict_review,
     assess_trend_comparability,
     context_connection,
@@ -43,10 +43,10 @@ from ai_apitest.context.storage import (
     update_lesson_review,
     validate_context,
 )
-from ai_apitest.ai.conflict_review import parse_conflict_review_response
-from ai_apitest.context.dependencies import infer_dependency_candidates, verify_dependency_candidates
-from ai_apitest.execution.assertions import evaluate
-from ai_apitest.execution.runner import (
+from iatest.ai.conflict_review import parse_conflict_review_response
+from iatest.context.dependencies import infer_dependency_candidates, verify_dependency_candidates
+from iatest.execution.assertions import evaluate
+from iatest.execution.runner import (
     EndpointRateLimit,
     RequestRateLimiter,
     apply_path_params,
@@ -57,9 +57,9 @@ from ai_apitest.execution.runner import (
     run_environment_setup,
     run_ordered_cases,
 )
-from ai_apitest.execution.fixtures import FixtureManager, case_is_executable
-from ai_apitest.generator.cases import attach_setup_steps, generate_cases, load_cases_from_markdown, save_cases
-from ai_apitest.mock_server import (
+from iatest.execution.fixtures import FixtureManager, case_is_executable
+from iatest.generator.cases import attach_setup_steps, generate_cases, load_cases_from_markdown, save_cases
+from iatest.mock_server import (
     MockState,
     match_route_path,
     render_mock_template,
@@ -67,9 +67,9 @@ from ai_apitest.mock_server import (
     response_context,
     validate_mock_routes,
 )
-from ai_apitest.orchestrator.maintainer.change_detector import diff_endpoints
-from ai_apitest.orchestrator.scheduler.runner import natural_language_to_cron
-from ai_apitest.web.server import display_message_for_tasks, handle_action, inline_md, is_safe_report_name, page, render_audit_rows, render_case_detail_modal, render_cases, render_config, render_conflict_groups, render_context, render_context_pack_panel, render_endpoint_modals, render_lesson_cards, render_reports, render_supplement_form, render_trend_overview, stop_web_mock_service, web_mock_status
+from iatest.orchestrator.maintainer.change_detector import diff_endpoints
+from iatest.orchestrator.scheduler.runner import natural_language_to_cron
+from iatest.web.server import display_message_for_tasks, handle_action, inline_md, is_safe_report_name, page, render_audit_rows, render_case_detail_modal, render_api_cases, render_settings, render_conflict_groups, render_project_knowledge, render_context_pack_panel, render_endpoint_modals, render_lesson_cards, render_api_reports, render_supplement_form, render_trend_overview, stop_web_mock_service, web_mock_status
 
 
 def test_json_path_target_and_operator_are_normalized() -> None:
@@ -646,7 +646,7 @@ def test_environment_setup_context_is_available_to_cases() -> None:
 
 
 def test_parallel_runner_preserves_case_order() -> None:
-    from ai_apitest.core.models import TestCase
+    from iatest.core.models import TestCase
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"path": request.url.path})
@@ -834,7 +834,7 @@ def test_validate_cases_preserves_scenario_id() -> None:
 
 
 def test_parse_plan_rejects_chain_with_unknown_step() -> None:
-    from ai_apitest.ai.case_generation import _parse_plan
+    from iatest.ai.case_generation import _parse_plan
 
     endpoints = [
         Endpoint(method="GET", path="/api/generate", responses={"200": {}}),
@@ -874,7 +874,7 @@ def test_parse_plan_rejects_chain_with_unknown_step() -> None:
 
 
 def test_rule_fill_scenario_uses_public_rule_generator() -> None:
-    from ai_apitest.ai.case_generation import _rule_fill_scenario
+    from iatest.ai.case_generation import _rule_fill_scenario
 
     endpoints = [Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {}})]
     cases = _rule_fill_scenario(
@@ -894,7 +894,7 @@ def test_rule_fill_scenario_uses_public_rule_generator() -> None:
 
 
 def test_two_phase_case_generation_forwards_stream_callback(monkeypatch) -> None:
-    from ai_apitest.ai.case_generation import generate_cases_from_plan_batch, generate_coverage_plan
+    from iatest.ai.case_generation import generate_cases_from_plan_batch, generate_coverage_plan
 
     endpoint = Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {}})
     calls: list[str] = []
@@ -907,7 +907,7 @@ def test_two_phase_case_generation_forwards_stream_callback(monkeypatch) -> None
             return '[{"scenario_id":"SCN-API-001","endpoint_method":"GET","endpoint_path":"/api/generate","design_method":"happy_path","priority":"P0","title_hint":"生成邮箱"}]'
         return '[{"scenario_id":"SCN-API-001","id":"TC-API-0001","title":"生成邮箱","method":"GET","path":"/api/generate","priority":"P0","design_method":"happy_path","runnable":true,"risk":"none","assertions":[{"type":"status_code","operator":"eq","expected":200}]}]'
 
-    monkeypatch.setattr("ai_apitest.ai.provider.chat_completion", mock_chat_completion)
+    monkeypatch.setattr("iatest.ai.provider.chat_completion", mock_chat_completion)
 
     plan, _ = generate_coverage_plan(
         endpoints=[endpoint],
@@ -1034,7 +1034,7 @@ def test_case_from_dict_normalizes_legacy_priority() -> None:
 
 
 def test_case_ids_expand_after_999_and_p0_is_highest() -> None:
-    from ai_apitest.core.case_schema import normalize_cases
+    from iatest.core.case_schema import normalize_cases
 
     cases = [
         ApiTestCase(id="", title=f"case {index}", method="GET", path="/api/email", priority="", design_method="happy_path")
@@ -1088,7 +1088,7 @@ def test_report_name_and_inline_markdown() -> None:
 
 def test_page_exposes_project_creation_entry(tmp_path) -> None:
     html = page(tmp_path, "tempbox", "接口信息", "<section></section>")
-    assert "本地测试工作台" in html
+    assert 'class="site-nav"' in html
     assert "新建项目" in html
     assert "/actions/create-project" in html
 
@@ -1132,8 +1132,8 @@ def test_trend_overview_is_only_displayed_in_reports_not_project_context(tmp_pat
     )
     save_execution_trend(tmp_path, "demo", 1, [result], run_scope="full")
 
-    context_html = render_context(tmp_path, "demo", urlparse("/context?project=demo"))
-    reports_html = render_reports(tmp_path, "demo", urlparse("/reports?project=demo"))
+    context_html = render_project_knowledge(tmp_path, "demo", urlparse("/context?project=demo"))
+    reports_html = render_api_reports(tmp_path, "demo", urlparse("/reports?project=demo"))
 
     assert "趋势概览" not in context_html
     assert "section-trend" not in context_html
@@ -1141,7 +1141,7 @@ def test_trend_overview_is_only_displayed_in_reports_not_project_context(tmp_pat
 
 
 def test_trend_case_ids_survive_db_roundtrip_and_jaccard(tmp_path) -> None:
-    from ai_apitest.core.models import CaseResult
+    from iatest.core.models import CaseResult
 
     project = "t_jaccard"
     results_1 = [
@@ -1182,7 +1182,7 @@ def test_trend_case_ids_survive_db_roundtrip_and_jaccard(tmp_path) -> None:
 
 
 def test_governance_safe_json_validation() -> None:
-    from ai_apitest.ai.workflows import _safe_json, _validate_governance_response
+    from iatest.ai.workflows import _safe_json, _validate_governance_response
 
     # Basic parsing
     assert _safe_json('{"a":1}') == {"a": 1}
@@ -1219,7 +1219,7 @@ def test_governance_safe_json_validation() -> None:
 
 
 def test_governance_config_defaults() -> None:
-    from ai_apitest.core.config import DEFAULT_CONFIG
+    from iatest.core.config import DEFAULT_CONFIG
     g = DEFAULT_CONFIG.get("governance", {})
     assert g["enabled"] is True
     assert g["review_reports"] is True
@@ -1230,7 +1230,7 @@ def test_governance_config_defaults() -> None:
 
 
 def test_governance_fallback_role() -> None:
-    from ai_apitest.ai.llm_config import normalize_llm_role, resolve_llm_role, normalize_llm_config
+    from iatest.ai.llm_config import normalize_llm_role, resolve_llm_role, normalize_llm_config
     cfg = normalize_llm_config({})
     # Unknown roles should not KeyError
     result = resolve_llm_role(cfg, "case_reviewer")
@@ -1241,8 +1241,8 @@ def test_governance_fallback_role() -> None:
 
 def test_json_repair_succeeds_and_uses_ai_cases() -> None:
     """First output is malformed JSON → repair succeeds → AI cases used with warning."""
-    from ai_apitest.ai.case_generation import _repair_and_parse, validate_cases
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.case_generation import _repair_and_parse, validate_cases
+    from iatest.core.models import Endpoint
 
     endpoints = [Endpoint(method="GET", path="/api/test", summary="Test")]
     content = '[{"id": "TC-001", "title": "Test", "method": "GET", "path": "/api/test", "priority": "P0", "design_method": "happy_path", "runnable": true, "risk": "low", "assertions": []}]'
@@ -1266,8 +1266,8 @@ def test_json_repair_succeeds_and_uses_ai_cases() -> None:
 
 def test_json_repair_failure_message_is_sanitized() -> None:
     """User never sees raw JSONDecodeError text in any code path."""
-    from ai_apitest.ai.case_generation import _repair_and_parse
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.case_generation import _repair_and_parse
+    from iatest.core.models import Endpoint
 
     endpoints = [Endpoint(method="GET", path="/api/test", summary="Test")]
     try:
@@ -1286,7 +1286,7 @@ def test_json_repair_failure_message_is_sanitized() -> None:
 
 def test_repair_json_array_sends_error_context() -> None:
     """repair_json_array extracts error position and builds contextual prompt."""
-    from ai_apitest.ai.provider import repair_json_array
+    from iatest.ai.provider import repair_json_array
 
     for error in [
         "Expecting ',' delimiter: line 282 column 59 (char 12345)",
@@ -1311,8 +1311,8 @@ def test_repair_json_array_sends_error_context() -> None:
 def test_repair_success_path_with_mock(monkeypatch) -> None:
     """Bad JSON → repair_json_array mocked → succeeds → AI cases returned with warning."""
     import json as _json
-    from ai_apitest.ai.case_generation import _repair_and_parse
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.case_generation import _repair_and_parse
+    from iatest.core.models import Endpoint
 
     valid_json = _json.dumps([
         {"id": "TC-001", "title": "Happy Path", "method": "GET", "path": "/api/test",
@@ -1326,7 +1326,7 @@ def test_repair_success_path_with_mock(monkeypatch) -> None:
         call_count[0] += 1
         return valid_json
 
-    monkeypatch.setattr("ai_apitest.ai.case_generation.repair_json_array", mock_repair)
+    monkeypatch.setattr("iatest.ai.case_generation.repair_json_array", mock_repair)
 
     endpoints = [Endpoint(method="GET", path="/api/test", summary="Test")]
     cases, warning = _repair_and_parse(
@@ -1347,8 +1347,8 @@ def test_generate_cases_entrypoint_repair_flow(monkeypatch) -> None:
     """Full entry-point test: chat_completion returns bad JSON →
        extract_json_array fails → repair_json_array succeeds → AI cases returned."""
     import json as _json
-    from ai_apitest.ai import case_generation as cg
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai import case_generation as cg
+    from iatest.core.models import Endpoint
 
     bad_json = "{not valid json at all"
     valid_json = _json.dumps([
@@ -1383,8 +1383,8 @@ def test_generate_cases_entrypoint_repair_flow(monkeypatch) -> None:
 
 def test_generate_cases_entrypoint_repair_exhausted(monkeypatch) -> None:
     """Full entry-point test: repair fails twice → ValueError raised with user-friendly message."""
-    from ai_apitest.ai import case_generation as cg
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai import case_generation as cg
+    from iatest.core.models import Endpoint
 
     bad_json = "{still broken after repair}"
 
@@ -1422,7 +1422,7 @@ def test_generate_cases_entrypoint_repair_exhausted(monkeypatch) -> None:
 def test_api_discovery_repair_flow(monkeypatch) -> None:
     """API discovery: bad JSON → repair → parse succeeds."""
     import json as _json
-    from ai_apitest.ai import api_discovery as ad
+    from iatest.ai import api_discovery as ad
 
     good = _json.dumps([{"method": "GET", "path": "/api/x", "summary": "X"}])
     repair_calls = []
@@ -1435,7 +1435,7 @@ def test_api_discovery_repair_flow(monkeypatch) -> None:
         return good
 
     monkeypatch.setattr(ad, "chat_completion", mock_chat)
-    monkeypatch.setattr("ai_apitest.ai.provider.repair_json_output", mock_repair)
+    monkeypatch.setattr("iatest.ai.provider.repair_json_output", mock_repair)
 
     eps = ad.discover_endpoints_with_llm("doc text", {"base_url": "http://x", "model": "m", "api_key_env": "K"})
     assert len(repair_calls) == 1
@@ -1446,7 +1446,7 @@ def test_api_discovery_repair_flow(monkeypatch) -> None:
 def test_conflict_review_repair_flow(monkeypatch) -> None:
     """Conflict review: bad JSON → repair → parse succeeds."""
     import json as _json
-    from ai_apitest.ai import conflict_review as cr
+    from iatest.ai import conflict_review as cr
 
     good = _json.dumps([{"relation_id": 1, "decision": "conflict", "reason": "same"}])
     repair_calls = []
@@ -1459,7 +1459,7 @@ def test_conflict_review_repair_flow(monkeypatch) -> None:
         return good
 
     monkeypatch.setattr(cr, "chat_completion", mock_chat)
-    monkeypatch.setattr("ai_apitest.ai.provider.repair_json_output", mock_repair)
+    monkeypatch.setattr("iatest.ai.provider.repair_json_output", mock_repair)
 
     conflicts = [{"relation_id": 1, "method": "GET", "path": "/api/x", "environment": "",
                   "a_title": "A", "a_content": "a", "a_confidence": "high", "a_source": "x",
@@ -1472,7 +1472,7 @@ def test_conflict_review_repair_flow(monkeypatch) -> None:
 
 def test_governance_object_repair_flow(monkeypatch) -> None:
     """Governance JSON object: bad JSON → repair → validated."""
-    from ai_apitest.ai.workflows import _governance_parse_json
+    from iatest.ai.workflows import _governance_parse_json
 
     good = '{"verdict": "approved", "confidence": "high", "issues": []}'
     repair_calls = []
@@ -1481,7 +1481,7 @@ def test_governance_object_repair_flow(monkeypatch) -> None:
         repair_calls.append(1)
         return good
 
-    monkeypatch.setattr("ai_apitest.ai.provider.repair_json_output", mock_repair)
+    monkeypatch.setattr("iatest.ai.provider.repair_json_output", mock_repair)
 
     result = _governance_parse_json(
         "{bad json", response_type="report_review",
@@ -1495,7 +1495,7 @@ def test_governance_object_repair_flow(monkeypatch) -> None:
 def test_embedded_block_repair_flow(monkeypatch) -> None:
     """Embedded JSON block: repair returns bare JSON → fallback parse succeeds."""
     import json as _json
-    from ai_apitest.context.extraction import _extract_block_with_repair
+    from iatest.context.extraction import _extract_block_with_repair
 
     # Repair returns bare JSON (no fenced block) — parse must handle both
     bare = _json.dumps([{"title": "Lesson 1", "content": "Content"}])
@@ -1505,7 +1505,7 @@ def test_embedded_block_repair_flow(monkeypatch) -> None:
         repair_calls.append(1)
         return bare
 
-    monkeypatch.setattr("ai_apitest.ai.provider.repair_json_output", mock_repair)
+    monkeypatch.setattr("iatest.ai.provider.repair_json_output", mock_repair)
 
     result = _extract_block_with_repair(
         "some markdown ```iatest-lessons-json\n{bad\n``` more text",
@@ -1518,8 +1518,8 @@ def test_embedded_block_repair_flow(monkeypatch) -> None:
 
 
 def test_coverage_gap_detection_chain_missing() -> None:
-    from ai_apitest.ai.workflows import _detect_coverage_gaps
-    from ai_apitest.core.models import Assertion, Endpoint, TestCase
+    from iatest.ai.workflows import _detect_coverage_gaps
+    from iatest.core.models import Assertion, Endpoint, TestCase
 
     eps = [
         Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
@@ -1541,8 +1541,8 @@ def test_coverage_gap_detection_chain_missing() -> None:
 
 
 def test_coverage_gap_no_false_positives() -> None:
-    from ai_apitest.ai.workflows import _detect_coverage_gaps
-    from ai_apitest.core.models import Endpoint, TestCase
+    from iatest.ai.workflows import _detect_coverage_gaps
+    from iatest.core.models import Endpoint, TestCase
 
     eps = [Endpoint(method="GET", path="/api/status", summary="状态")]
     cases = [
@@ -1556,8 +1556,8 @@ def test_coverage_gap_no_false_positives() -> None:
 
 
 def test_coverage_gap_endpoint_with_error_responses() -> None:
-    from ai_apitest.ai.workflows import _detect_coverage_gaps
-    from ai_apitest.core.models import Endpoint, TestCase
+    from iatest.ai.workflows import _detect_coverage_gaps
+    from iatest.core.models import Endpoint, TestCase
 
     eps = [Endpoint(method="POST", path="/api/order", summary="下单", responses={"200": {}, "422": {}, "500": {}})]
     # Only happy_path, no error coverage
@@ -1573,8 +1573,8 @@ def test_coverage_gap_endpoint_with_error_responses() -> None:
 
 def test_gap_fill_full_flow_detect_generate_merge_verify(monkeypatch) -> None:
     """Full flow: detect gaps → generate fills with valid CHAIN → merge → secondary check."""
-    from ai_apitest.ai import workflows as wf
-    from ai_apitest.core.models import Endpoint, TestCase, TestStep
+    from iatest.ai import workflows as wf
+    from iatest.core.models import Endpoint, TestCase, TestStep
 
     eps = [
         Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
@@ -1605,8 +1605,8 @@ def test_gap_fill_full_flow_detect_generate_merge_verify(monkeypatch) -> None:
 
     monkeypatch.setattr(wf, "_fill_coverage_gaps", lambda *a, **kw: (fill_cases, "mock diag"))
 
-    from ai_apitest.generator.cases import attach_cleanup_steps, attach_setup_steps
-    from ai_apitest.ai.workflows import dedupe_supplemental_cases
+    from iatest.generator.cases import attach_cleanup_steps, attach_setup_steps
+    from iatest.ai.workflows import dedupe_supplemental_cases
 
     initial = attach_cleanup_steps(attach_setup_steps(initial, eps), eps)
     gaps2 = wf._detect_coverage_gaps(initial, eps)
@@ -1622,8 +1622,8 @@ def test_gap_fill_full_flow_detect_generate_merge_verify(monkeypatch) -> None:
 
 def test_empty_chain_does_not_count_as_covered() -> None:
     """Empty-shell CHAIN (steps=[]) must NOT satisfy the dependency_chain gap check."""
-    from ai_apitest.ai.workflows import _detect_coverage_gaps
-    from ai_apitest.core.models import Endpoint, TestCase
+    from iatest.ai.workflows import _detect_coverage_gaps
+    from iatest.core.models import Endpoint, TestCase
 
     eps = [
         Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
@@ -1646,8 +1646,8 @@ def test_empty_chain_does_not_count_as_covered() -> None:
 
 
 def test_generate_cases_with_config_rule_fills_critical_gaps(monkeypatch, tmp_path) -> None:
-    from ai_apitest.ai import workflows as wf
-    from ai_apitest.core.models import Assertion, Endpoint, TestCase
+    from iatest.ai import workflows as wf
+    from iatest.core.models import Assertion, Endpoint, TestCase
 
     eps = [
         Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {}}),
@@ -1689,7 +1689,7 @@ def test_generate_cases_with_config_rule_fills_critical_gaps(monkeypatch, tmp_pa
     ], ""))
 
     # Mock Phase 2: batch generation returns cases with scenario_ids
-    from ai_apitest.core.models import TestStep
+    from iatest.core.models import TestStep
     def mock_batch(plan_items=None, endpoints=None, **kwargs):
         cases = []
         for item in plan_items or []:
@@ -1738,8 +1738,8 @@ def test_generate_cases_with_config_rule_fills_critical_gaps(monkeypatch, tmp_pa
 
 
 def test_generate_cases_with_config_rule_fallback_when_batches_are_empty(monkeypatch, tmp_path) -> None:
-    from ai_apitest.ai import workflows as wf
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai import workflows as wf
+    from iatest.core.models import Endpoint
 
     eps = [
         Endpoint(
@@ -1781,8 +1781,8 @@ def test_generate_cases_with_config_rule_fallback_when_batches_are_empty(monkeyp
 
 
 def test_detect_runnable_misclassification_finds_false_negatives() -> None:
-    from ai_apitest.ai.workflows import detect_runnable_misclassification
-    from ai_apitest.core.models import TestCase
+    from iatest.ai.workflows import detect_runnable_misclassification
+    from iatest.core.models import TestCase
 
     dep_graph = {
         "edges": [{
@@ -1812,8 +1812,8 @@ def test_detect_runnable_misclassification_finds_false_negatives() -> None:
 
 
 def test_validate_setup_variable_flow_detects_unreferenced() -> None:
-    from ai_apitest.ai.workflows import validate_setup_variable_flow
-    from ai_apitest.core.models import TestCase, TestStep
+    from iatest.ai.workflows import validate_setup_variable_flow
+    from iatest.core.models import TestCase, TestStep
 
     # setup_step extracts email but path_params doesn't reference {{email}}
     case_bad = TestCase(id="TC-001", title="test", method="DELETE", path="/api/delete/{email}",
@@ -1840,8 +1840,8 @@ def test_validate_setup_variable_flow_detects_unreferenced() -> None:
 
 def test_revise_cases_stabilizes_id_by_scenario_id(monkeypatch) -> None:
     """LLM returns different id but same scenario_id → _revise_cases re-maps to original id."""
-    from ai_apitest.ai.workflows import _revise_cases
-    from ai_apitest.core.models import TestCase, Endpoint
+    from iatest.ai.workflows import _revise_cases
+    from iatest.core.models import TestCase, Endpoint
 
     eps = [Endpoint(method="GET", path="/api/generate", summary="gen"),
            Endpoint(method="DELETE", path="/api/delete/{email}", summary="del")]
@@ -1857,9 +1857,9 @@ def test_revise_cases_stabilizes_id_by_scenario_id(monkeypatch) -> None:
     # LLM returns DIFFERENT id (TC-999) but SAME scenario_id (SCN-DELETE-001)
     fixed_json = '[{"id":"TC-999","title":"fixed","method":"DELETE","path":"/api/delete/{email}","runnable":true,"risk":"data_dependent","priority":"P0","design_method":"happy_path","scenario_id":"SCN-DELETE-001","setup_steps":[],"assertions":[],"headers":{},"path_params":{},"query":{},"body":null,"preconditions":[],"test_steps":[],"expected_result":"","source":""}]'
 
-    monkeypatch.setattr("ai_apitest.ai.provider.chat_completion", lambda **kw: fixed_json)
-    monkeypatch.setattr("ai_apitest.ai.provider.extract_json_array", lambda t: __import__('json').loads(t))
-    monkeypatch.setattr("ai_apitest.ai.workflows._audit_governance", lambda *a, **kw: None)
+    monkeypatch.setattr("iatest.ai.provider.chat_completion", lambda **kw: fixed_json)
+    monkeypatch.setattr("iatest.ai.provider.extract_json_array", lambda t: __import__('json').loads(t))
+    monkeypatch.setattr("iatest.ai.workflows._audit_governance", lambda *a, **kw: None)
 
     revised = _revise_cases(None, "", cases, issues, eps, {})
     assert len(revised) == 1
@@ -1868,8 +1868,8 @@ def test_revise_cases_stabilizes_id_by_scenario_id(monkeypatch) -> None:
 
 
 def test_revise_cases_replaces_misclassified_cases(monkeypatch) -> None:
-    from ai_apitest.ai.workflows import _revise_cases
-    from ai_apitest.core.models import TestCase, Endpoint
+    from iatest.ai.workflows import _revise_cases
+    from iatest.core.models import TestCase, Endpoint
 
     eps = [Endpoint(method="GET", path="/api/generate", summary="gen"),
            Endpoint(method="DELETE", path="/api/delete/{email}", summary="del")]
@@ -1888,9 +1888,9 @@ def test_revise_cases_replaces_misclassified_cases(monkeypatch) -> None:
     def mock_chat(**kw):
         return fixed_json
 
-    monkeypatch.setattr("ai_apitest.ai.provider.chat_completion", mock_chat)
-    monkeypatch.setattr("ai_apitest.ai.workflows._audit_governance", lambda *a, **kw: None)
-    monkeypatch.setattr("ai_apitest.ai.provider.extract_json_array", lambda t: __import__('json').loads(t))
+    monkeypatch.setattr("iatest.ai.provider.chat_completion", mock_chat)
+    monkeypatch.setattr("iatest.ai.workflows._audit_governance", lambda *a, **kw: None)
+    monkeypatch.setattr("iatest.ai.provider.extract_json_array", lambda t: __import__('json').loads(t))
 
     revised = _revise_cases(None, "", cases, issues, eps, {})
     assert len(revised) == 1
@@ -1901,8 +1901,8 @@ def test_revise_cases_replaces_misclassified_cases(monkeypatch) -> None:
 
 def test_govern_cases_preserves_duplicate_ids_across_batches() -> None:
     """Two cases with same id but different scenario_id must both survive governance."""
-    from ai_apitest.ai.workflows import _govern_cases, _governance_enabled
-    from ai_apitest.core.models import TestCase, Endpoint
+    from iatest.ai.workflows import _govern_cases, _governance_enabled
+    from iatest.core.models import TestCase, Endpoint
     from unittest.mock import patch
 
     eps = [Endpoint(method="GET", path="/api/generate", summary="gen"),
@@ -1919,13 +1919,13 @@ def test_govern_cases_preserves_duplicate_ids_across_batches() -> None:
     ]
 
     # Disable real LLM calls
-    with patch("ai_apitest.ai.workflows._governance_enabled", return_value=False):
+    with patch("iatest.ai.workflows._governance_enabled", return_value=False):
         result = _govern_cases(None, "", cases, eps)
     # Governance disabled → should return None
     assert result is None
 
     # Now force-enabled with no real LLM — the key test is dict construction
-    from ai_apitest.ai.workflows import configured_llm, is_llm_configured
+    from iatest.ai.workflows import configured_llm, is_llm_configured
     # Use a quick inline check: simulate the dict construction
     case_by_key: dict[str, object] = {}
     for c in cases:
@@ -1939,8 +1939,8 @@ def test_govern_cases_preserves_duplicate_ids_across_batches() -> None:
 
 def test_plan_dm_mismatch_blocks_coverage_pass(monkeypatch, tmp_path) -> None:
     """Plan with design_method/title_hint mismatch → 覆盖验收未通过 despite full scenario coverage."""
-    from ai_apitest.ai import workflows as wf
-    from ai_apitest.core.models import Endpoint, TestCase
+    from iatest.ai import workflows as wf
+    from iatest.core.models import Endpoint, TestCase
 
     eps = [Endpoint(method="GET", path="/api/test", summary="Test")]
     config = load_config(tmp_path)
@@ -1977,8 +1977,8 @@ def test_plan_dm_mismatch_blocks_coverage_pass(monkeypatch, tmp_path) -> None:
 
 def test_coverage_plan_batch_preserves_multiple_same_dm_scenarios() -> None:
     """Dedup must not merge different title_hint scenarios for same (method, path, dm)."""
-    from ai_apitest.ai.case_generation import _normalize_plan_ids
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.case_generation import _normalize_plan_ids
+    from iatest.core.models import Endpoint
     eps = [Endpoint(method="GET", path="/api/test")]
     plan = [
         {"endpoint_method": "GET", "endpoint_path": "/api/test", "design_method": "boundary_value",
@@ -1992,8 +1992,8 @@ def test_coverage_plan_batch_preserves_multiple_same_dm_scenarios() -> None:
 
 def test_fill_hard_gaps_local_dep_graph_produces_chain() -> None:
     """Without master dep_graph, local _build_dependency_graph fallback must produce CHAIN."""
-    from ai_apitest.ai.workflows import _fill_hard_gaps
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.workflows import _fill_hard_gaps
+    from iatest.core.models import Endpoint
 
     eps = [
         Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
@@ -2007,8 +2007,8 @@ def test_fill_hard_gaps_local_dep_graph_produces_chain() -> None:
 
 def test_fill_hard_gaps_respects_existing_chain() -> None:
     """When plan already has CHAIN, _fill_hard_gaps must not add another."""
-    from ai_apitest.ai.workflows import _fill_hard_gaps
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.workflows import _fill_hard_gaps
+    from iatest.core.models import Endpoint
 
     eps = [Endpoint(method="GET", path="/api/generate", summary="gen"),
            Endpoint(method="GET", path="/api/check/{email}", summary="check")]
@@ -2024,7 +2024,7 @@ def test_fill_hard_gaps_respects_existing_chain() -> None:
 
 def test_coverage_plan_batch_context_in_prompt() -> None:
     """BATCH_CONTEXT must appear in rendered prompt when provided."""
-    from ai_apitest.ai.prompting import render_prompt
+    from iatest.ai.prompting import render_prompt
     rendered = render_prompt("coverage_plan.md", {
         "BATCH_CONTEXT": "第 1/3 批。只为当前批接口生成场景。",
         "CHAIN_RULE": "（分批模式，不要生成 CHAIN 条目）",
@@ -2037,15 +2037,15 @@ def test_coverage_plan_batch_context_in_prompt() -> None:
 
 def test_coverage_plan_repair_failure_no_raw_json_leak(monkeypatch) -> None:
     """When repair fails, user must NOT see raw JSONDecodeError text."""
-    from ai_apitest.ai.case_generation import generate_coverage_plan
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.case_generation import generate_coverage_plan
+    from iatest.core.models import Endpoint
 
     eps = [Endpoint(method="GET", path="/api/test", summary="Test")]
 
     def mock_chat(**kw):
         return "{broken json <<<"
 
-    monkeypatch.setattr("ai_apitest.ai.provider.chat_completion", mock_chat)
+    monkeypatch.setattr("iatest.ai.provider.chat_completion", mock_chat)
 
     try:
         generate_coverage_plan(endpoints=eps, base_url="x", model="m", api_key_env="K")
@@ -2057,7 +2057,7 @@ def test_coverage_plan_repair_failure_no_raw_json_leak(monkeypatch) -> None:
 
 
 def test_openai_compatible_request_includes_max_tokens(monkeypatch) -> None:
-    from ai_apitest.ai import provider
+    from iatest.ai import provider
 
     captured: dict = {}
 
@@ -2100,19 +2100,19 @@ def test_openai_compatible_request_includes_max_tokens(monkeypatch) -> None:
 
 
 def test_coverage_plan_repair_forwards_max_tokens(monkeypatch) -> None:
-    from ai_apitest.ai.case_generation import generate_coverage_plan
-    from ai_apitest.core.models import Endpoint
+    from iatest.ai.case_generation import generate_coverage_plan
+    from iatest.core.models import Endpoint
 
     captured: dict = {}
     eps = [Endpoint(method="GET", path="/api/test", summary="Test")]
 
-    monkeypatch.setattr("ai_apitest.ai.provider.chat_completion", lambda **kw: "{bad json")
+    monkeypatch.setattr("iatest.ai.provider.chat_completion", lambda **kw: "{bad json")
 
     def mock_repair_json_output(**kwargs):
         captured["max_tokens"] = kwargs.get("max_tokens")
         return '[{"scenario_id":"SCN-001","endpoint_method":"GET","endpoint_path":"/api/test","design_method":"happy_path","priority":"P0","title_hint":"Test"}]'
 
-    monkeypatch.setattr("ai_apitest.ai.provider.repair_json_output", mock_repair_json_output)
+    monkeypatch.setattr("iatest.ai.provider.repair_json_output", mock_repair_json_output)
 
     plan, warning = generate_coverage_plan(
         endpoints=eps, base_url="x", model="m", api_key_env="K", max_tokens=8000
@@ -2124,8 +2124,8 @@ def test_coverage_plan_repair_forwards_max_tokens(monkeypatch) -> None:
 
 
 def test_scenario_id_survives_save_and_reload(tmp_path) -> None:
-    from ai_apitest.core.models import TestCase
-    from ai_apitest.generator.cases import save_cases, load_cases_from_markdown
+    from iatest.core.models import TestCase
+    from iatest.generator.cases import save_cases, load_cases_from_markdown
     from pathlib import Path
 
     cases = [
@@ -2184,7 +2184,7 @@ def test_dependency_lessons_show_specific_content_and_candidate_state(tmp_path) 
 
 
 def test_dependency_lessons_are_grouped_for_display_and_prompt(tmp_path) -> None:
-    from ai_apitest.context.dependencies import update_dependency_status
+    from iatest.context.dependencies import update_dependency_status
 
     producer = Endpoint(
         method="GET",
@@ -2262,7 +2262,7 @@ def test_audit_rows_are_human_readable() -> None:
     assert "AI 报告分析" in html
     assert "保存新的上下文经验" in html
     assert "lesson" not in html
-    template = (Path(__file__).resolve().parents[1] / "ai_apitest/web/templates/context.html").read_text(encoding="utf-8")
+    template = (Path(__file__).resolve().parents[1] / "iatest/web/templates/project_knowledge.html").read_text(encoding="utf-8")
     assert "执行动作" in template
     assert "发生了什么" not in template
 
@@ -2318,8 +2318,8 @@ def test_audit_rows_collapse_repeated_extraction_noise() -> None:
 
 
 def test_run_cases_uses_background_task_panel() -> None:
-    template = (Path(__file__).resolve().parents[1] / "ai_apitest/web/templates/cases.html").read_text(encoding="utf-8")
-    script = (Path(__file__).resolve().parents[1] / "ai_apitest/web/static/app.js").read_text(encoding="utf-8")
+    template = (Path(__file__).resolve().parents[1] / "iatest/web/templates/api_cases.html").read_text(encoding="utf-8")
+    script = (Path(__file__).resolve().parents[1] / "iatest/web/static/app.js").read_text(encoding="utf-8")
     assert 'action="/actions/run-cases"' in template
     assert 'data-task-action="run"' in template
     assert "data-loading-message" not in template.split('action="/actions/run-cases"', 1)[1].split("</form>", 1)[0]
@@ -2328,7 +2328,7 @@ def test_run_cases_uses_background_task_panel() -> None:
 
 
 def test_cases_page_exposes_supplement_case_action() -> None:
-    template = (Path(__file__).resolve().parents[1] / "ai_apitest/web/templates/cases.html").read_text(encoding="utf-8")
+    template = (Path(__file__).resolve().parents[1] / "iatest/web/templates/api_cases.html").read_text(encoding="utf-8")
     html = render_supplement_form("tempbox", [Endpoint(method="GET", path="/api/generate", summary="生成邮箱")])
     assert "{{SUPPLEMENT_FORM}}" in template
     assert 'action="/actions/supplement-cases"' in html
@@ -2454,7 +2454,7 @@ def test_web_config_saves_fixture_and_mock_settings(tmp_path) -> None:
     assert config["fixtures"]["timeout_seconds"] == 5.0
     assert config["mock"]["routes"] == routes
     assert config["mock"]["port"] == 8781
-    page_html = render_config(tmp_path, "demo", type("Parsed", (), {"query": ""})())
+    page_html = render_settings(tmp_path, "demo", type("Parsed", (), {"query": ""})())
     assert "项目方外部测试能力" in page_html
     assert "接口 Mock" in page_html
     assert "iatest mock --project demo" in page_html
@@ -2517,7 +2517,7 @@ def test_web_console_can_start_and_stop_mock_listener(tmp_path) -> None:
         assert response.json() == {"ready": True}
         assert web_mock_status(tmp_path)["running"] is True
 
-        page_html = render_config(tmp_path, "demo", type("Parsed", (), {"query": ""})())
+        page_html = render_settings(tmp_path, "demo", type("Parsed", (), {"query": ""})())
         assert "监听中" in page_html
         assert "开启 Mock 端口监听" in page_html
 
@@ -2543,7 +2543,7 @@ def test_agent_runtime_web_is_read_only_and_reports_json_mode_override(tmp_path)
     config["agents"]["governance_mode"] = "legacy"
     save_config(tmp_path, config)
 
-    page_html = render_config(tmp_path, "demo", type("Parsed", (), {"query": ""})())
+    page_html = render_settings(tmp_path, "demo", type("Parsed", (), {"query": ""})())
     assert "当前处于部分 Legacy 回滚" in page_html
     assert "治理执行器" in page_html
     assert 'action="/actions/save-agent-runtime"' not in page_html
@@ -2737,7 +2737,7 @@ def test_case_generation_lesson_contains_concrete_assertions(tmp_path) -> None:
             Assertion(type="json_path", target="$.data.token", operator="not_empty", expected=True),
         ],
     )
-    from ai_apitest.context.storage import record_case_generation_lessons
+    from iatest.context.storage import record_case_generation_lessons
 
     record_case_generation_lessons(tmp_path, "tempbox", [case])
     lesson = list_lessons(tmp_path, "tempbox", lesson_type="assertion_pattern")[0]
@@ -2987,7 +2987,7 @@ def test_web_bulk_case_delete_keeps_unselected_cases_and_rebuilds_coverage(tmp_p
         def redirect(self, location: str) -> None:
             self.locations.append(location)
 
-    rendered = render_cases(tmp_path, "demo", urlparse("/cases?project=demo"))
+    rendered = render_api_cases(tmp_path, "demo", urlparse("/cases?project=demo"))
     assert 'action="/actions/delete-cases"' in rendered
     assert 'data-bulk-select-all="cases"' in rendered
     assert "name='case_ids' value='TC-API-0001'" in rendered
@@ -3018,7 +3018,7 @@ def test_web_bulk_report_delete_keeps_unselected_and_rejects_unsafe_names(tmp_pa
     for name in names:
         (reports_dir / name).write_text("# 测试报告\n\n| 执行用例数 | 3 |\n| 通过 | 2 |\n", encoding="utf-8")
 
-    rendered = render_reports(tmp_path, "demo", urlparse("/reports?project=demo"))
+    rendered = render_api_reports(tmp_path, "demo", urlparse("/reports?project=demo"))
     assert 'action="/actions/delete-reports"' in rendered
     assert 'data-bulk-select-all="reports"' in rendered
     assert f"name='report_names' value='{names[0]}'" in rendered

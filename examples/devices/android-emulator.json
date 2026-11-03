@@ -1,0 +1,15 @@
+{
+  "id": "android-vm",
+  "platform": "android",
+  "device_id": "managed",
+  "app_id": "dev.iatest.mobile.lab",
+  "artifact_dir": "/absolute/probe-build",
+  "require_os_sandbox": true,
+  "managed_emulator": {
+    "sdk_root": "/absolute/Android/sdk",
+    "system_image": "android-36;google_apis;arm64-v8a",
+    "artifact_id": "android-lab",
+    "memory_mb": 2048,
+    "boot_timeout_seconds": 180
+  }
+}

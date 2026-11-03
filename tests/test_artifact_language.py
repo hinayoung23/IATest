@@ -5,26 +5,26 @@ from pathlib import Path
 
 import pytest
 
-from ai_apitest import cli
-from ai_apitest.ai.case_generation import system_prompt
-from ai_apitest.ai.workflows import generate_cases_with_config, report_quality_gate_issues
-from ai_apitest.context.storage import list_lessons, record_case_generation_lessons
-from ai_apitest.core.artifact_language import (
+from iatest import cli
+from iatest.ai.case_generation import system_prompt
+from iatest.ai.workflows import generate_cases_with_config, report_quality_gate_issues
+from iatest.context.storage import list_lessons, record_case_generation_lessons
+from iatest.core.artifact_language import (
     localize_generated_cases,
     output_language_instruction,
     set_current_artifact_language,
 )
-from ai_apitest.core.case_schema import (
+from iatest.core.case_schema import (
     external_test_capability_summary,
     normalize_cases,
 )
-from ai_apitest.core.config import init_project, load_config, save_config
-from ai_apitest.core.models import Assertion, CaseResult, Endpoint, TestCase as CaseModel
-from ai_apitest.core.paths import project_cases_file, project_reports_dir
-from ai_apitest.generator.cases import generate_cases, render_cases_markdown
-from ai_apitest.report.markdown import render_report_markdown
-from ai_apitest.web import server
-from ai_apitest.web.i18n import set_current_locale
+from iatest.core.config import init_project, load_config, save_config
+from iatest.core.models import Assertion, CaseResult, Endpoint, TestCase as CaseModel
+from iatest.core.paths import project_cases_file, project_reports_dir
+from iatest.generator.cases import generate_cases, render_cases_markdown
+from iatest.report.markdown import render_report_markdown
+from iatest.web import server
+from iatest.web.i18n import set_current_locale
 
 
 def test_default_artifact_language_is_english(tmp_path: Path) -> None:

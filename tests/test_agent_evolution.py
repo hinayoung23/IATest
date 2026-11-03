@@ -7,14 +7,14 @@ import sys
 
 import pytest
 
-from ai_apitest.agents.evaluation import evaluate_agent_suite
-from ai_apitest.agents.identity import RoleRegistry, RoleSpec
-from ai_apitest.agents.runtime import AgentRuntime
-from ai_apitest.ai.provider import ModelResponse, ModelToolCall, TokenUsage
-from ai_apitest.data.agent_runs import AgentRunRepository
-from ai_apitest.data.agent_sessions import SessionRecoveryError
-from ai_apitest.data.repositories import ProjectDataAccess
-from ai_apitest.tools.registry import ToolExecutionContext, ToolRegistry, ToolSpec
+from iatest.agents.evaluation import evaluate_agent_suite
+from iatest.agents.identity import RoleRegistry, RoleSpec
+from iatest.agents.runtime import AgentRuntime
+from iatest.ai.provider import ModelResponse, ModelToolCall, TokenUsage
+from iatest.data.agent_runs import AgentRunRepository
+from iatest.data.agent_sessions import SessionRecoveryError
+from iatest.data.repositories import ProjectDataAccess
+from iatest.tools.registry import ToolExecutionContext, ToolRegistry, ToolSpec
 
 
 class Gateway:
@@ -79,6 +79,19 @@ def test_durable_resume_blocks_unknown_writes_and_version_drift(tmp_path):
         runtime.run(role_id="task", task_prompt="task", tool_context=context, session_id="changed", resume=True)
 
 
+def test_fatal_tool_interrupt_is_audited_without_replaying_the_write(tmp_path):
+    writes = []
+    runtime, context, gateway = durable_runtime(tmp_path, writes, "write", idempotent=False)
+    with pytest.raises(RuntimeError, match="write interrupted"):
+        runtime.run(role_id="task", task_prompt="task", tool_context=context)
+    audit = runtime.audit
+    run = audit.list_recent()[0]
+    with audit.connection() as conn:
+        rows = [dict(row) for row in conn.execute("select name,status,error from agent_tool_calls where run_id=?", (run["id"],))]
+    assert rows == [{"name": "write", "status": "interrupted", "error": "RuntimeError: write interrupted"}]
+    assert len(writes) == 1 and not gateway.responses
+
+
 def test_baseline_and_bad_reference_evaluations(tmp_path):
     from pathlib import Path
     source = Path(__file__).resolve().parents[1] / "examples/evals/agent-baseline.json"
@@ -105,8 +118,8 @@ def test_evaluation_accepts_semantic_basis_but_checks_compiled_status(tmp_path):
 
 
 def test_live_evaluator_uses_configured_master_fallback(tmp_path, monkeypatch):
-    from ai_apitest.core.config import save_config
-    import ai_apitest.agents.evaluation as evaluation
+    from iatest.core.config import save_config
+    import iatest.agents.evaluation as evaluation
     task = json.loads((Path(__file__).resolve().parents[1] / "examples/evals/agent-baseline.json").read_text())["tasks"][1]
     save_config(tmp_path, {"llm": {"master": {"enabled": True, "base_url": "https://model.invalid", "model": "configured-master", "api_key_env": "TEST_MODEL_KEY"}}})
     selected = []
@@ -124,8 +137,8 @@ def test_live_evaluator_uses_configured_master_fallback(tmp_path, monkeypatch):
 
 
 def test_designer_schema_guides_assertion_types_and_short_audit_reads_work(tmp_path):
-    from ai_apitest.tools.builtin import build_case_generation_tool_registry
-    from ai_apitest.tools.registry import ToolInputError
+    from iatest.tools.builtin import build_case_generation_tool_registry
+    from iatest.tools.registry import ToolInputError
     tools = build_case_generation_tool_registry()
     task = json.loads((Path(__file__).resolve().parents[1] / "examples/evals/agent-baseline.json").read_text())["tasks"][1]
     args = copy.deepcopy(task["responses"][-1]["tool_calls"][0]["arguments"])
@@ -142,7 +155,7 @@ def test_designer_schema_guides_assertion_types_and_short_audit_reads_work(tmp_p
 
 
 def test_complete_tool_input_output_and_deadline(tmp_path):
-    from ai_apitest.tools.registry import ToolInputError, ToolOutputError, ToolTimeoutError
+    from iatest.tools.registry import ToolInputError, ToolOutputError, ToolTimeoutError
     import time
     context = ToolExecutionContext(tmp_path, "demo", None)
     registry = ToolRegistry()
@@ -158,7 +171,7 @@ def test_complete_tool_input_output_and_deadline(tmp_path):
 
 
 def test_shared_task_budget_and_model_routing(tmp_path):
-    from ai_apitest.agents.policy import TaskBudget, TaskBudgetExceeded, route_model, task_budget
+    from iatest.agents.policy import TaskBudget, TaskBudgetExceeded, route_model, task_budget
     budget = TaskBudget(max_tokens=1000, max_tool_calls=1)
     allowed = budget.reserve(250, 400)
     assert allowed == 400
@@ -181,10 +194,10 @@ def test_shared_task_budget_and_model_routing(tmp_path):
 
 
 def test_recipe_permissions_versions_and_cache_invalidation(tmp_path):
-    from ai_apitest.agents.recipes import RecipeCatalog
-    from ai_apitest.core.config import load_config
-    from ai_apitest.ai.workflows import case_generation_fingerprint
-    from ai_apitest.core.models import Endpoint
+    from iatest.agents.recipes import RecipeCatalog
+    from iatest.core.config import load_config
+    from iatest.ai.workflows import case_generation_fingerprint
+    from iatest.core.models import Endpoint
     folder = tmp_path / "recipes"
     folder.mkdir()
     path = folder / "SKILL.md"
@@ -211,13 +224,13 @@ def test_durable_recovery_after_real_process_exit(tmp_path, crash_write):
     script = tmp_path / "restart.py"
     script.write_text('''import json, os, sys
 from pathlib import Path
-from ai_apitest.agents.identity import RoleRegistry, RoleSpec
-from ai_apitest.agents.policy import TaskBudget, task_budget
-from ai_apitest.agents.runtime import AgentRuntime
-from ai_apitest.ai.provider import ModelResponse, ModelToolCall, TokenUsage
-from ai_apitest.data.agent_runs import AgentRunRepository
-from ai_apitest.data.repositories import ProjectDataAccess
-from ai_apitest.tools.registry import ToolExecutionContext, ToolRegistry, ToolSpec
+from iatest.agents.identity import RoleRegistry, RoleSpec
+from iatest.agents.policy import TaskBudget, task_budget
+from iatest.agents.runtime import AgentRuntime
+from iatest.ai.provider import ModelResponse, ModelToolCall, TokenUsage
+from iatest.data.agent_runs import AgentRunRepository
+from iatest.data.repositories import ProjectDataAccess
+from iatest.tools.registry import ToolExecutionContext, ToolRegistry, ToolSpec
 root = Path(sys.argv[1])
 resume, unsafe = sys.argv[2] == "resume", sys.argv[3] == "unsafe"
 role = RoleSpec("task", "1", "test", "test", "master", "Task", "Artifact", allowed_tools=("write", "finish"), max_tool_rounds=4, token_budget=20000)
@@ -262,7 +275,7 @@ print(json.dumps({"artifact": result.artifact, "tokens": budget.tokens, "calls":
 
 
 def test_budget_restore_failure_releases_session_and_model_timeout_is_bounded(tmp_path):
-    from ai_apitest.agents.policy import TaskBudget, task_budget, TaskBudgetExceeded
+    from iatest.agents.policy import TaskBudget, task_budget, TaskBudgetExceeded
     runtime, context, gateway = durable_runtime(tmp_path, [], "finish")
     seen = []
     original = gateway.complete
@@ -285,8 +298,8 @@ def test_budget_restore_failure_releases_session_and_model_timeout_is_bounded(tm
 
 @pytest.mark.parametrize("model_stream", [False, True])
 def test_task_deadline_stops_model_stream_even_for_heartbeats(tmp_path, model_stream):
-    from ai_apitest.agents.policy import TaskBudget, task_budget, TaskBudgetExceeded
-    from ai_apitest.ai.provider import read_openai_model_stream, read_openai_stream
+    from iatest.agents.policy import TaskBudget, task_budget, TaskBudgetExceeded
+    from iatest.ai.provider import read_openai_model_stream, read_openai_stream
     budget = TaskBudget(timeout_seconds=60)
     def lines():
         yield 'data: {"choices":[{"delta":{"content":"ok"}}]}'

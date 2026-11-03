@@ -1,0 +1,25 @@
+{
+  "id": "mysql-account-quality",
+  "kind": "data",
+  "budget": {"timeout_seconds": 30, "max_requests": 10},
+  "spec": {
+    "database": {
+      "driver": "mysql",
+      "host": "db.example.test",
+      "port": 3306,
+      "database": "business",
+      "credentials": {"username": {"$env": "TEST_DB_USER"}, "password": {"$env": "TEST_DB_PASSWORD"}},
+      "allowed_origins": ["https://db.example.test:3306"],
+      "tls": "verify-full",
+      "query": "select id,email from accounts where id > ? order by id",
+      "parameters": [0],
+      "allowed_tables": ["accounts"],
+      "max_rows": 1000,
+      "timeout_seconds": 10
+    },
+    "checks": [
+      {"id": "nonempty", "rule": "count", "min": 1},
+      {"id": "unique-id", "rule": "unique", "path": "$.id"}
+    ]
+  }
+}

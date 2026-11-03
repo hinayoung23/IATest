@@ -1,0 +1,529 @@
+{
+  "version": "2.2",
+  "source": "https://www.w3.org/TR/WCAG22/",
+  "source_sha256": "6e3c5fe397257cae509a2fb4752b73062cf8cbeb92c2cec618989b17e4cf7057",
+  "criteria": [
+    {
+      "id": "1.1.1",
+      "name": "Non-text Content",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.1",
+      "name": "Audio-only and Video-only (Prerecorded)",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.2",
+      "name": "Captions (Prerecorded)",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.3",
+      "name": "Audio Description or Media Alternative (Prerecorded)",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.4",
+      "name": "Captions (Live)",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.5",
+      "name": "Audio Description (Prerecorded)",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.6",
+      "name": "Sign Language (Prerecorded)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.7",
+      "name": "Extended Audio Description (Prerecorded)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.8",
+      "name": "Media Alternative (Prerecorded)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.2.9",
+      "name": "Audio-only (Live)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.3.1",
+      "name": "Info and Relationships",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.3.2",
+      "name": "Meaningful Sequence",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.3.3",
+      "name": "Sensory Characteristics",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.3.4",
+      "name": "Orientation",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.3.5",
+      "name": "Identify Input Purpose",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.3.6",
+      "name": "Identify Purpose",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.1",
+      "name": "Use of Color",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.2",
+      "name": "Audio Control",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.3",
+      "name": "Contrast (Minimum)",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.4",
+      "name": "Resize Text",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.5",
+      "name": "Images of Text",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.6",
+      "name": "Contrast (Enhanced)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.7",
+      "name": "Low or No Background Audio",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.8",
+      "name": "Visual Presentation",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.9",
+      "name": "Images of Text (No Exception)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.10",
+      "name": "Reflow",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.11",
+      "name": "Non-text Contrast",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.12",
+      "name": "Text Spacing",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "1.4.13",
+      "name": "Content on Hover or Focus",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "2.1.1",
+      "name": "Keyboard",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.1.2",
+      "name": "No Keyboard Trap",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.1.3",
+      "name": "Keyboard (No Exception)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.1.4",
+      "name": "Character Key Shortcuts",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.2.1",
+      "name": "Timing Adjustable",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.2.2",
+      "name": "Pause, Stop, Hide",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.2.3",
+      "name": "No Timing",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.2.4",
+      "name": "Interruptions",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.2.5",
+      "name": "Re-authenticating",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.2.6",
+      "name": "Timeouts",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.3.1",
+      "name": "Three Flashes or Below Threshold",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.3.2",
+      "name": "Three Flashes",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.3.3",
+      "name": "Animation from Interactions",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.1",
+      "name": "Bypass Blocks",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.2",
+      "name": "Page Titled",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.3",
+      "name": "Focus Order",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.4",
+      "name": "Link Purpose (In Context)",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.5",
+      "name": "Multiple Ways",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.6",
+      "name": "Headings and Labels",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.7",
+      "name": "Focus Visible",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.8",
+      "name": "Location",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.9",
+      "name": "Link Purpose (Link Only)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.10",
+      "name": "Section Headings",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.11",
+      "name": "Focus Not Obscured (Minimum)",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.12",
+      "name": "Focus Not Obscured (Enhanced)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.4.13",
+      "name": "Focus Appearance",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.1",
+      "name": "Pointer Gestures",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.2",
+      "name": "Pointer Cancellation",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.3",
+      "name": "Label in Name",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.4",
+      "name": "Motion Actuation",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.5",
+      "name": "Target Size (Enhanced)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.6",
+      "name": "Concurrent Input Mechanisms",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.7",
+      "name": "Dragging Movements",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "2.5.8",
+      "name": "Target Size (Minimum)",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "3.1.1",
+      "name": "Language of Page",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "3.1.2",
+      "name": "Language of Parts",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "3.1.3",
+      "name": "Unusual Words",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "3.1.4",
+      "name": "Abbreviations",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "3.1.5",
+      "name": "Reading Level",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "3.1.6",
+      "name": "Pronunciation",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "3.2.1",
+      "name": "On Focus",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "3.2.2",
+      "name": "On Input",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "3.2.3",
+      "name": "Consistent Navigation",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "3.2.4",
+      "name": "Consistent Identification",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "3.2.5",
+      "name": "Change on Request",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "3.2.6",
+      "name": "Consistent Help",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.1",
+      "name": "Error Identification",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.2",
+      "name": "Labels or Instructions",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.3",
+      "name": "Error Suggestion",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.4",
+      "name": "Error Prevention (Legal, Financial, Data)",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.5",
+      "name": "Help",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.6",
+      "name": "Error Prevention (All)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.7",
+      "name": "Redundant Entry",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.8",
+      "name": "Accessible Authentication (Minimum)",
+      "level": "AA",
+      "obsolete": false
+    },
+    {
+      "id": "3.3.9",
+      "name": "Accessible Authentication (Enhanced)",
+      "level": "AAA",
+      "obsolete": false
+    },
+    {
+      "id": "4.1.1",
+      "name": "Parsing (Obsolete and removed)",
+      "level": null,
+      "obsolete": true
+    },
+    {
+      "id": "4.1.2",
+      "name": "Name, Role, Value",
+      "level": "A",
+      "obsolete": false
+    },
+    {
+      "id": "4.1.3",
+      "name": "Status Messages",
+      "level": "AA",
+      "obsolete": false
+    }
+  ]
+}

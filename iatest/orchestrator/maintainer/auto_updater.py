@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+import json
+
+from iatest.ai.case_generation import validate_cases
+from iatest.ai.prompting import render_prompt
+from iatest.ai.provider import chat_completion, extract_json_array, retry_with_json_repair
+from iatest.core.models import Endpoint, TestCase
+from iatest.core.artifact_language import output_language_instruction
+from iatest.core.serde import to_jsonable
+from iatest.orchestrator.maintainer.change_detector import diff_endpoints, endpoint_key
+
+
+def impacted_cases(cases: list[TestCase], changed_endpoint_keys: list[str]) -> list[TestCase]:
+    changed = set(changed_endpoint_keys)
+    return [
+        case
+        for case in cases
+        if f"{case.method.upper()} {case.path}" in changed
+        or any(
+            f"{step.method.upper()} {step.path}" in changed
+            for step in [*case.setup_steps, *case.steps, *case.cleanup_steps]
+        )
+    ]
+
+
+def impacted_endpoint_keys(old: list[Endpoint], new: list[Endpoint]) -> list[str]:
+    changes = diff_endpoints(old, new)
+    return sorted({*changes["added"], *changes["removed"], *changes["changed"]})
+
+
+def auto_update_cases_with_llm(
+    *,
+    impacted: list[TestCase],
+    endpoints: list[Endpoint],
+    diff: dict,
+    llm: dict,
+) -> list[TestCase]:
+    if not impacted:
+        return []
+    content = chat_completion(
+        base_url=llm.get("base_url", ""),
+        model=llm.get("model", ""),
+        api_key_env=llm.get("api_key_env", ""),
+        provider=llm.get("provider", "openai-compatible"),
+        messages=[
+            {
+                "role": "user",
+                "content": output_language_instruction() + "\n\n" + render_prompt(
+                    "case_maintenance.md",
+                    {
+                        "DIFF_JSON": json.dumps(diff, ensure_ascii=False, indent=2),
+                        "CASES_JSON": json.dumps(to_jsonable(impacted), ensure_ascii=False, indent=2),
+                    },
+                ),
+            }
+        ],
+    )
+    try:
+        cases, _warning = retry_with_json_repair(
+            content, parse_json=extract_json_array,
+            base_url=llm.get("base_url", ""), model=llm.get("model", ""),
+            api_key_env=llm.get("api_key_env", ""), provider=llm.get("provider", "openai-compatible"),
+            description="（用例维护）",
+        )
+        return validate_cases(cases, endpoints)
+    except ValueError:
+        # Repair exhausted — let caller decide fallback; don't re-parse broken content
+        raise ValueError("大模型输出格式异常，用例维护自动修复失败。") from None

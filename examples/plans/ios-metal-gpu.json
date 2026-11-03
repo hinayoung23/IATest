@@ -1,0 +1,37 @@
+{
+  "id": "ios-metal-gpu",
+  "kind": "client_performance",
+  "spec": {
+    "platform": "ios",
+    "iterations": 1,
+    "telemetry": {
+      "artifact_id": "ios-instrumented-app"
+    },
+    "thresholds": {
+      "max_app_metal_gpu_busy_ratio": 0.8
+    },
+    "plan": {
+      "id": "ios-toggle",
+      "kind": "ios",
+      "spec": {
+        "profile": "ios-lab",
+        "steps": [
+          {
+            "op": "tap",
+            "target": {
+              "identifier": "option_toggle"
+            }
+          },
+          {
+            "op": "expect",
+            "target": {
+              "identifier": "option_status"
+            },
+            "attribute": "text",
+            "expected": "Option on"
+          }
+        ]
+      }
+    }
+  }
+}

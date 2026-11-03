@@ -1,9 +1,85 @@
-recursive-include docs *.md
-include examples/demo_server.py
-include examples/openapi.json
-include examples/test_support_server.py
+recursive-include docs *.md *.svg
+include examples/api_service.py
+include examples/api_contract.json
+include examples/api_support_service.py
 include examples/fixture-providers.json
 include examples/Dockerfile.sandbox
+include examples/Dockerfile.browser-sandbox
+include scripts/validate_container.py
+include scripts/validate_ios_simulator.py
 recursive-include examples/evals *.json
 recursive-include examples/recipes SKILL.md
 include scripts/validate_token_optimization.py
+include scripts/build_mobile.py
+include scripts/build_android_lab.py
+include scripts/validate_network_database.py
+include scripts/validate_android_emulator.py
+include scripts/validate_android_display.py
+include scripts/validate_android_firewall.py
+include scripts/validate_android_energy.py
+include scripts/validate_android_bluetooth_hid.py
+include scripts/validate_android_hid_resilience.py
+include scripts/configure_usb_hid_gadget.py
+include scripts/validate_android_completion.py
+include scripts/validate_android_console.py
+include scripts/validate_android_console.cjs
+include scripts/validate_android_goal.py
+include scripts/validate_android_media.py
+include scripts/validate_android_video_soak.py
+include scripts/validate_android_soak.py
+include tests/fixtures/observation_client.m
+include tests/conftest.py
+recursive-include iatest/mobile/native *.java *.xml *.m *.h *.pbxproj *.xcscheme *.md
+include scripts/validate_mobile_agent.py
+include scripts/validate_mobile_console.py
+include scripts/validate_mobile_console.cjs
+recursive-include examples/devices *.json
+recursive-include examples/measurements *.json
+recursive-include examples/hid *.json
+recursive-include examples/plans *.json
+recursive-include iatest/engines *.js
+recursive-include iatest/engines *.json
+include examples/automation_lab.py
+include scripts/validate_test_engines.py
+include scripts/validate_test_workbench_console.py
+include scripts/validate_test_workbench_console.cjs
+include examples/ui_goal_lab.py
+include scripts/validate_goal_exploration.py
+include scripts/validate_goal_console.py
+include scripts/validate_goal_console.cjs
+include scripts/validate_business_flow.py
+include scripts/validate_business_flow.cjs
+recursive-include iatest/nodes *.ps1
+include scripts/validate_ios_console.py
+include scripts/validate_ios_console.cjs
+include scripts/validate_ios_host.py
+include scripts/validate_ios_device.py
+include scripts/validate_ios_device_console.py
+include scripts/validate_ios_device_console.cjs
+include scripts/validate_ios_performance_console.py
+include scripts/validate_ios_performance_console.cjs
+include scripts/validate_lan_windows.py
+include scripts/validate_windows_desktop.py
+include scripts/validate_package_install.py
+recursive-include tests/fixtures/ios *.xml *.md
+recursive-include iatest/mobile/native/bridge *.java *.h *.m
+include scripts/benchmark_ui.py
+include scripts/benchmark_ui.cjs
+include scripts/validate_bridge_build.py
+include scripts/validate_mobile_visual.py
+include scripts/validate_ios_webkit.py
+include scripts/validate_ios_completion.py
+include scripts/validate_ios_collectors.py
+include scripts/validate_ios_attach.py
+include scripts/validate_completion_console.py
+include scripts/validate_completion_console.cjs
+include examples/desktop_controls_lab.swift
+include examples/desktop_controls_lab.py
+include scripts/validate_linux_desktop.py
+include scripts/validate_desktop_interactions.py
+recursive-include iatest/engines/desktop_native *.swift *.ps1 *.py *.js *.json
+include examples/desktop_visual_lab.swift
+include scripts/validate_desktop_vision.py
+include scripts/validate_console_design.cjs
+include README.zh-CN.md
+include scripts/validate_console_workspace.cjs

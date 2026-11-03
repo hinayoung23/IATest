@@ -15,4 +15,5 @@ test_cases/
 dist/
 build/
 *.egg
+native/mobile/build/
 uv.lock

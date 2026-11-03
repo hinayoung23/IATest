@@ -1,0 +1,12 @@
+# Build Dockerfile.sandbox as iatest-sandbox:local first, then this optional image.
+ARG FRAMEWORK_IMAGE=iatest-sandbox:local
+FROM ${FRAMEWORK_IMAGE}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage "$@"\n' > /usr/local/bin/iatest-chromium \
+    && chmod 755 /usr/local/bin/iatest-chromium
+# Chromium's inner namespace sandbox is disabled explicitly in this image.
+# The controller must retain its Docker user/cgroup/capability/network limits.
+ENV IATEST_CHROMIUM_PATH=/usr/local/bin/iatest-chromium
+USER 65532:65532

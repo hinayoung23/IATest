@@ -1,0 +1,10 @@
+{
+  "id": "health-performance", "kind": "performance", "contract_version": 1,
+  "budget": {"timeout_seconds": 30, "max_requests": 100},
+  "spec": {
+    "allowed_origins": ["http://127.0.0.1:8766"],
+    "mode": "arrival_rate", "duration_seconds": 5, "users": 4, "rate": 10, "seed": 42,
+    "request": {"method": "GET", "url": "http://127.0.0.1:8766/health?sample={{random}}&run={{namespace}}", "expected_status": [200]},
+    "thresholds": {"p95_ms": 500, "max_error_ratio": 0, "max_dropped_ratio": 0, "min_rps": 5}
+  }
+}

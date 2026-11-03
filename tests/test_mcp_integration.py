@@ -7,14 +7,14 @@ import sys
 import httpx
 import pytest
 
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import TestCase as Case, Assertion, Endpoint
-from ai_apitest.core.paths import project_docs_file
-from ai_apitest.core.serde import write_json
-from ai_apitest.core.sandbox import SandboxPolicy, policy_scope, SandboxViolation
-from ai_apitest.execution.fixtures import FixtureManager
-from ai_apitest.generator.cases import save_cases
-from ai_apitest.integrations.mcp_server import MCPServer, MAX_MESSAGE
+from iatest.core.config import load_config, save_config
+from iatest.core.models import TestCase as Case, Assertion, Endpoint
+from iatest.core.paths import project_docs_file
+from iatest.core.serde import write_json
+from iatest.core.sandbox import SandboxPolicy, policy_scope, SandboxViolation
+from iatest.execution.fixtures import FixtureManager
+from iatest.generator.cases import save_cases
+from iatest.integrations.mcp_server import MCPServer, MAX_MESSAGE
 
 
 def initialize(server):
@@ -26,7 +26,7 @@ def initialize(server):
 def test_mcp_real_stdio_protocol_read_only_and_size_limit(tmp_path):
     write_json(project_docs_file(tmp_path, "demo"), [{"method": "GET", "path": "/health", "responses": {"200": {}}}])
     messages = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}}, {"jsonrpc": "2.0", "method": "notifications/initialized"}, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_contracts", "arguments": {"project": "demo"}}}, {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "get_results", "arguments": {"project": "../demo"}}}]
-    process = subprocess.run([sys.executable, "-X", "utf8", "-m", "ai_apitest", "mcp"], cwd=tmp_path, input="\n".join(json.dumps(row) for row in messages) + "\n", capture_output=True, text=True, encoding="utf-8", timeout=10)
+    process = subprocess.run([sys.executable, "-X", "utf8", "-m", "iatest", "mcp"], cwd=tmp_path, input="\n".join(json.dumps(row) for row in messages) + "\n", capture_output=True, text=True, encoding="utf-8", timeout=10)
     assert process.returncode == 0, process.stderr
     replies = [json.loads(row) for row in process.stdout.splitlines()]
     assert len(replies) == 4
@@ -70,7 +70,7 @@ def test_http_mcp_fixture_initialization_session_extract_and_cleanup(sse):
 
 
 def test_mcp_fixture_network_policy_blocks_unapproved_service(tmp_path):
-    from ai_apitest.integrations.mcp_client import HTTPMCPClient
+    from iatest.integrations.mcp_client import HTTPMCPClient
     policy = SandboxPolicy.from_config(tmp_path, {}, base_url="https://target.invalid")
     with policy_scope(policy), httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as client:
         with pytest.raises(SandboxViolation):

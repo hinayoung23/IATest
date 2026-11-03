@@ -1,0 +1,11 @@
+{
+  "id": "response-security", "kind": "security", "contract_version": 1,
+  "budget": {"timeout_seconds": 30, "max_requests": 10},
+  "spec": {
+    "allowed_origins": ["http://127.0.0.1:8766"], "allow_mutation": true,
+    "checks": [
+      {"id": "response-policy", "rule": "response_headers", "request": {"url": "http://127.0.0.1:8766/health"}, "required_headers": {"x-content-type-options": "nosniff"}},
+      {"id": "required-name", "rule": "contract_mutation", "request": {"method": "POST", "url": "http://127.0.0.1:8766/contract", "json": {"name": "Tester"}}, "json_schema": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string"}}, "additionalProperties": false}, "field": "name", "mutation": "remove_required"}
+    ]
+  }
+}

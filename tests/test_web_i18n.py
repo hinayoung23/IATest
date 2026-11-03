@@ -6,15 +6,15 @@ from urllib.parse import urlparse
 
 import pytest
 
-from ai_apitest.core.config import init_project
-from ai_apitest.web.i18n import (
+from iatest.core.config import init_project
+from iatest.web.i18n import (
     locale_from_request,
     localize_html,
     missing_translation_keys,
     normalize_locale,
     set_current_locale,
 )
-from ai_apitest.web.server import (
+from iatest.web.server import (
     render_agent_runtime_config,
     render_conflict_pair,
     render_lesson_cards,
@@ -49,29 +49,29 @@ def test_non_english_language_catalogs_cover_all_fixed_copy() -> None:
 
 
 @pytest.mark.parametrize(
-    ("locale", "html_lang", "dashboard", "settings"),
+    ("locale", "html_lang", "overview", "settings"),
     [
-        ("en", "en", "Dashboard", "Settings"),
-        ("zh", "zh-CN", "仪表盘", "配置中心"),
-        ("ja", "ja", "ダッシュボード", "設定"),
-        ("fr", "fr", "Tableau de bord", "Paramètres"),
-        ("ru", "ru", "Панель управления", "Настройки"),
+        ("en", "en", "Overview", "Settings"),
+        ("zh", "zh-CN", "概览", "配置中心"),
+        ("ja", "ja", "概要", "設定"),
+        ("fr", "fr", "Vue d’ensemble", "Paramètres"),
+        ("ru", "ru", "Обзор", "Настройки"),
     ],
 )
 def test_main_pages_render_in_selected_locale(
     web_root: Path,
     locale: str,
     html_lang: str,
-    dashboard: str,
+    overview: str,
     settings: str,
 ) -> None:
     try:
         set_current_locale(locale)
-        dashboard_html = route_get(web_root, "demo", urlparse("/?project=demo"))
+        overview_html = route_get(web_root, "demo", urlparse("/?project=demo"))
         settings_html = route_get(web_root, "demo", urlparse("/config?project=demo"))
-        assert f'<html lang="{html_lang}" data-locale="{locale}">' in dashboard_html
-        assert f'<option value="{locale}" selected>' in dashboard_html
-        assert f"<h1>{dashboard}</h1>" in dashboard_html
+        assert f'<html lang="{html_lang}" data-locale="{locale}">' in overview_html
+        assert f'<option value="{locale}" selected>' in overview_html
+        assert f"<h1>{overview}</h1>" in overview_html
         assert f"<h1>{settings}</h1>" in settings_html
     finally:
         set_current_locale("zh")
@@ -105,7 +105,7 @@ def test_report_content_is_not_translated(web_root: Path) -> None:
 
 
 def test_language_switch_and_responsive_rules_are_shipped() -> None:
-    web_dir = Path(__file__).parents[1] / "ai_apitest" / "web"
+    web_dir = Path(__file__).parents[1] / "iatest" / "web"
     script = (web_dir / "static" / "app.js").read_text(encoding="utf-8")
     styles = (web_dir / "static" / "app.css").read_text(encoding="utf-8")
     template = (web_dir / "templates" / "base.html").read_text(encoding="utf-8")
@@ -172,7 +172,7 @@ def test_mock_runtime_status_is_localized(
     configured: str,
 ) -> None:
     monkeypatch.setattr(
-        "ai_apitest.web.server.web_mock_status",
+        "iatest.web.server.web_mock_status",
         lambda _root: {"running": False},
     )
     try:

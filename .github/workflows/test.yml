@@ -8,6 +8,24 @@ permissions:
   contents: read
 
 jobs:
+  linux-desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install X11 and AT-SPI acceptance environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libatspi2.0-0 at-spi2-core dbus-x11 xvfb xauth openbox python3-gi gir1.2-gtk-3.0
+          python -m pip install ".[test]"
+      - name: Verify real Linux desktop input
+        env:
+          IATEST_TEST_LINUX_DESKTOP: '1'
+        run: xvfb-run -a dbus-run-session -- bash -c 'openbox > /tmp/iatest-openbox.log 2>&1 & python -m pytest -q tests/test_linux_desktop.py'
   test:
     strategy:
       fail-fast: false
@@ -26,7 +44,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install ".[test]"
+      - run: python -m pip install ".[test,database,hid]"
       - run: python -m pytest -q --junitxml=test-results.xml
       - uses: actions/upload-artifact@v7
         if: always()

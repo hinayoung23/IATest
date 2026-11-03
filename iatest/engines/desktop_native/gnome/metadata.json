@@ -1,0 +1,7 @@
+{
+  "uuid": "iatest-wayland@iatest.dev",
+  "name": "IATest scoped Wayland capture",
+  "description": "Explicit, temporary consent for one process's window identity and capture. Input stays with the XDG RemoteDesktop portal.",
+  "shell-version": ["43", "44"],
+  "version": 1
+}

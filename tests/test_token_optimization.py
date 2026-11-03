@@ -7,21 +7,21 @@ from dataclasses import replace
 
 import pytest
 
-from ai_apitest.agents.identity import default_role_registry
-from ai_apitest.agents.runtime import AgentRuntime
-from ai_apitest.agents.token_optimization import canonical, pack_evidence, unpack_evidence
-from ai_apitest.ai.provider import MODEL_HTTP_ATTEMPTS, ModelResponse, ModelToolCall, TokenUsage
-from ai_apitest.application.incremental_audit import incremental_bundle
-from ai_apitest.application.quality_audit import DIMENSIONS, RUBRIC_VERSION, QualityAuditService
-from ai_apitest.application.case_generation import plan_batches
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import Assertion, Endpoint, TestCase as Case
-from ai_apitest.core.serde import to_jsonable
-from ai_apitest.data.agent_runs import AgentRunRepository
-from ai_apitest.data.repositories import ProjectDataAccess
-from ai_apitest.data.token_usage import token_statistics
-from ai_apitest.tools.builtin import build_case_generation_tool_registry
-from ai_apitest.tools.registry import ToolExecutionContext, ToolRegistry
+from iatest.agents.identity import default_role_registry
+from iatest.agents.runtime import AgentRuntime
+from iatest.agents.token_optimization import canonical, pack_evidence, unpack_evidence
+from iatest.ai.provider import MODEL_HTTP_ATTEMPTS, ModelResponse, ModelToolCall, TokenUsage
+from iatest.application.incremental_audit import incremental_bundle
+from iatest.application.quality_audit import DIMENSIONS, RUBRIC_VERSION, QualityAuditService
+from iatest.application.case_generation import plan_batches
+from iatest.core.config import load_config, save_config
+from iatest.core.models import Assertion, Endpoint, TestCase as Case
+from iatest.core.serde import to_jsonable
+from iatest.data.agent_runs import AgentRunRepository
+from iatest.data.repositories import ProjectDataAccess
+from iatest.data.token_usage import token_statistics
+from iatest.tools.builtin import build_case_generation_tool_registry
+from iatest.tools.registry import ToolExecutionContext, ToolRegistry
 
 
 def settings(root, *, enabled=True):
@@ -198,7 +198,7 @@ def test_approved_baseline_reused_and_scores_remain_conservative(tmp_path):
 
 
 def test_exact_cache_keeps_scope_and_role_changes_invalidate_it(tmp_path):
-    from ai_apitest.agents.identity import RoleRegistry
+    from iatest.agents.identity import RoleRegistry
     settings(tmp_path)
     cases, evidence = cases_and_evidence()
     JudgeGateway.calls = []
@@ -324,7 +324,7 @@ def test_failed_model_call_is_unknown_cost_and_usage_estimates_are_marked(tmp_pa
 
 def test_statistics_does_not_create_or_migrate_db(tmp_path):
     assert token_statistics(tmp_path, "absent")["runs"] == 0
-    from ai_apitest.core.paths import project_agent_db
+    from iatest.core.paths import project_agent_db
     db = project_agent_db(tmp_path, "old")
     db.parent.mkdir(parents=True)
     with sqlite3.connect(db) as conn:
@@ -348,7 +348,7 @@ def test_batching_uses_serialized_contract_size_and_preserves_scenarios():
 
 
 def test_complete_contract_without_business_increment_skips_optional_planner(tmp_path):
-    from ai_apitest.application.case_generation import generate_cases_with_agent_runtime
+    from iatest.application.case_generation import generate_cases_with_agent_runtime
     config = settings(tmp_path)
     config["agents"]["planner_on_complete_contract"] = False
     save_config(tmp_path, config)
@@ -371,7 +371,7 @@ def test_complete_contract_without_business_increment_skips_optional_planner(tmp
     (True, {"type": "boolean", "const": True}, "service=1", False),
 ])
 def test_required_schema_field_is_a_real_assertion(required, field_schema, expected_text, valid):
-    from ai_apitest.domain.case_drafts import validate_final_assertions
+    from iatest.domain.case_drafts import validate_final_assertions
     schema = {"type": "object", "properties": {"service": field_schema}, "required": ["service"] if required else []}
     endpoint = Endpoint(method="GET", path="/health", responses={"200": {"content": {"application/json": {"schema": schema}}}})
     assertions = [Assertion(type="status_code", expected=200), Assertion(type="json_schema", expected=schema)]
@@ -383,8 +383,8 @@ def test_live_fixture_passes_the_actual_local_gate():
     import runpy
     from pathlib import Path
     fixture = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/validate_token_optimization.py"))["fixture"]
-    from ai_apitest.core.serde import case_from_dict
-    from ai_apitest.domain.case_drafts import validate_compiled_cases
+    from iatest.core.serde import case_from_dict
+    from iatest.domain.case_drafts import validate_compiled_cases
     endpoints, cases, _ = fixture()
     assert not [issue for issue in validate_compiled_cases([case_from_dict(case) for case in cases], endpoints) if issue.severity == "error"]
 
@@ -416,7 +416,7 @@ def test_prefetch_resume_retains_facts_and_does_not_repeat_reads(tmp_path):
 
 
 def test_prefetch_is_charged_to_task_tool_budget(tmp_path):
-    from ai_apitest.agents.policy import TaskBudget, TaskBudgetExceeded, task_budget
+    from iatest.agents.policy import TaskBudget, TaskBudgetExceeded, task_budget
     settings(tmp_path)
     JudgeGateway.calls = []
     context = ToolExecutionContext(tmp_path, "demo", ProjectDataAccess.create(tmp_path, "demo", endpoints=[]), {"audit_artifact_text": "{}"})

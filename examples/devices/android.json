@@ -1,0 +1,7 @@
+{
+  "id": "android-demo",
+  "platform": "android",
+  "device_id": "REPLACE_WITH_ADB_SERIAL",
+  "app_id": "com.example.shop",
+  "artifact_dir": "native/mobile/build/android"
+}

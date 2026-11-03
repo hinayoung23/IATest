@@ -1,0 +1,56 @@
+<?xml version='1.0' encoding='utf-8'?>
+<trace-query-result>
+  <node xpath="//trace-toc[1]/run[1]/data[1]/table[12]">
+    <schema name="sysmon-process" documentation="A raw process statistic update message.">
+      <col>
+        <mnemonic>time</mnemonic>
+        <name>Timestamp</name>
+        <engineering-type>start-time</engineering-type>
+      </col>
+      <col>
+        <mnemonic>process</mnemonic>
+        <name>Process Name</name>
+        <engineering-type>process</engineering-type>
+      </col>
+      <col>
+        <mnemonic>cpu-percent</mnemonic>
+        <name>% CPU</name>
+        <engineering-type>system-cpu-percent</engineering-type>
+      </col>
+      <col>
+        <mnemonic>memory-physical-footprint</mnemonic>
+        <name>Memory</name>
+        <engineering-type>size-in-bytes</engineering-type>
+      </col>
+      <col>
+        <mnemonic>memory-resident-size</mnemonic>
+        <name>Resident Size</name>
+        <engineering-type>size-in-bytes</engineering-type>
+      </col>
+      <col>
+        <mnemonic>pid</mnemonic>
+        <name>Process ID</name>
+        <engineering-type>pid</engineering-type>
+      </col>
+    </schema>
+    <row>
+      <start-time id="1" fmt="00:00.297.398">297398791</start-time>
+      <process id="2" fmt="Target (777)">
+        <pid id="3" fmt="Target (777)">777</pid>
+        <device-session id="4" fmt="TODO">TODO</device-session>
+      </process>
+      <sentinel />
+      <size-in-bytes id="15" fmt="9.63 MiB">10093072</size-in-bytes>
+      <size-in-bytes id="20" fmt="17.56 MiB">18415616</size-in-bytes>
+      <pid ref="3" />
+    </row>
+    <row>
+      <start-time id="33" fmt="00:01.363.149">1363149625</start-time>
+      <process ref="2" />
+      <system-cpu-percent id="35" fmt="0.0%">0.005367029</system-cpu-percent>
+      <size-in-bytes ref="15" />
+      <size-in-bytes ref="20" />
+      <pid ref="3" />
+    </row>
+  </node>
+</trace-query-result>

@@ -1,0 +1,10 @@
+{
+  "contract_version": 1,
+  "platform": "ios",
+  "app_id": "com.example.app",
+  "source": {"provider": "custom", "device_id": "controlled-fixture-not-device", "build": "fixture-v1", "test_id": "format-example-not-real-measurements"},
+  "measurements": [
+    {"metric": "ios_launch_ms", "unit": "ms", "values": [900, 1200]},
+    {"metric": "memory_footprint_kb", "unit": "KiB", "values": [19000, 21000]}
+  ]
+}

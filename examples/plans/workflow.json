@@ -1,0 +1,9 @@
+{
+  "id": "order-workflow", "kind": "workflow", "contract_version": 1,
+  "budget": {"timeout_seconds": 60, "max_requests": 20},
+  "spec": {"nodes": [
+    {"id": "prepare", "plan": {"id": "prepare-order", "kind": "api", "spec": {"allowed_origins": ["http://127.0.0.1:8766"], "requests": [{"url": "http://127.0.0.1:8766/order"}], "exports": {"order_id": {"path": "$.id", "type": "string", "sensitive": false}, "order_url": {"path": "$.url", "type": "string", "sensitive": false}}}}},
+    {"id": "verify", "depends_on": ["prepare"], "plan": {"id": "verify-order", "kind": "web", "spec": {"allowed_origins": ["http://127.0.0.1:8766"], "start_url": {"$from": "prepare.order_url", "type": "string", "sensitive": false}, "steps": [{"op": "expect", "assert": "text", "target": {"id": "order-detail"}, "expected": {"$from": "prepare.order_id", "type": "string", "sensitive": false}}]}}},
+    {"id": "cleanup", "depends_on": ["verify"], "always": true, "resource_owner": "prepare", "plan": {"id": "cleanup-order", "kind": "api", "spec": {"allowed_origins": ["http://127.0.0.1:8766"], "requests": [{"url": "http://127.0.0.1:8766/cleanup", "method": "POST"}]}}}
+  ]}
+}

@@ -13,12 +13,12 @@ from pathlib import Path
 import tempfile
 import time
 
-from ai_apitest.application.quality_audit import QualityAuditService
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import Assertion, Endpoint, TestCase
-from ai_apitest.core.serde import case_from_dict, to_jsonable, write_json
-from ai_apitest.data.token_usage import token_statistics
-from ai_apitest.domain.case_drafts import validate_compiled_cases
+from iatest.application.quality_audit import QualityAuditService
+from iatest.core.config import load_config, save_config
+from iatest.core.models import Assertion, Endpoint, TestCase
+from iatest.core.serde import case_from_dict, to_jsonable, write_json
+from iatest.data.token_usage import token_statistics
+from iatest.domain.case_drafts import validate_compiled_cases
 
 
 def fixture():
@@ -72,7 +72,7 @@ def main():
                     variants.append(("negative_changed", negative))
                 for round_index, (name, candidate) in enumerate(variants, 1):
                     start = time.monotonic()
-                    from ai_apitest.data.agent_runs import AgentRunRepository
+                    from iatest.data.agent_runs import AgentRunRepository
                     repository = AgentRunRepository(work, "acceptance")
                     with repository.connection() as conn:
                         prior_ids = {row[0] for row in conn.execute("select id from agent_runs")}

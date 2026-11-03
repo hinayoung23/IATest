@@ -14,26 +14,26 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from ai_apitest.cli import app
-from ai_apitest.core.config import load_config, save_config
-from ai_apitest.core.models import Assertion, TestCase as Case, TestStep as Step
-from ai_apitest.core.sandbox import SandboxPolicy, SandboxViolation, policy_scope, read_file
-from ai_apitest.core.serde import write_json
-from ai_apitest.core.paths import project_docs_file
-from ai_apitest.discovery.document import load_and_parse_source
-from ai_apitest.discovery.openapi import parse_openapi
-from ai_apitest.execution.auth import AuthManager
-from ai_apitest.execution.control import RunControl
-from ai_apitest.execution.datasets import dataset_rows
-from ai_apitest.execution.datasets import expand_cases
-from ai_apitest.execution.fixtures import FixtureManager
-from ai_apitest.execution.isolation import container_command, prepare_container, worker_environment, collect_container_output
-from ai_apitest.execution.options import RunOptions
-from ai_apitest.execution.plugins import PluginRegistry
-from ai_apitest.execution.runner import encode_request_body, multipart_fields, run_cases
-from ai_apitest.execution.transport import client_options
-from ai_apitest.generator.cases import save_cases
-from ai_apitest.report.storage import latest_run_metadata
+from iatest.cli import app
+from iatest.core.config import load_config, save_config
+from iatest.core.models import Assertion, TestCase as Case, TestStep as Step
+from iatest.core.sandbox import SandboxPolicy, SandboxViolation, policy_scope, read_file
+from iatest.core.serde import write_json
+from iatest.core.paths import project_docs_file
+from iatest.discovery.document import load_and_parse_source
+from iatest.discovery.openapi import parse_openapi
+from iatest.execution.auth import AuthManager
+from iatest.execution.control import RunControl
+from iatest.execution.datasets import dataset_rows
+from iatest.execution.datasets import expand_cases
+from iatest.execution.fixtures import FixtureManager
+from iatest.execution.isolation import container_command, prepare_container, worker_environment, collect_container_output
+from iatest.execution.options import RunOptions
+from iatest.execution.plugins import PluginRegistry
+from iatest.execution.runner import encode_request_body, multipart_fields, run_cases
+from iatest.execution.transport import client_options
+from iatest.generator.cases import save_cases
+from iatest.report.storage import latest_run_metadata
 
 
 def policy(root, **settings):
@@ -108,7 +108,7 @@ def test_network_policy_checks_every_redirect_before_io(tmp_path):
 
 
 def test_network_policy_rejects_dns_addresses_outside_declared_network(tmp_path, monkeypatch):
-    monkeypatch.setattr("ai_apitest.core.sandbox.socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("169.254.169.254", 443))])
+    monkeypatch.setattr("iatest.core.sandbox.socket.getaddrinfo", lambda *args, **kwargs: [(2, 1, 6, "", ("169.254.169.254", 443))])
     with pytest.raises(SandboxViolation, match="网段"):
         policy(tmp_path, allowed_networks=["127.0.0.0/8"]).check_url("https://target.invalid/")
 
@@ -170,7 +170,7 @@ def test_relative_tls_paths_resolve_against_project_in_worker(tmp_path, monkeypa
     def context(cafile=None):
         loaded.append(cafile)
         return Context()
-    monkeypatch.setattr("ai_apitest.execution.transport.ssl.create_default_context", context)
+    monkeypatch.setattr("iatest.execution.transport.ssl.create_default_context", context)
     with policy_scope(policy(tmp_path, mode="process")):
         client_options({"verify_tls": "fixtures/ca.pem", "client_cert": {"certfile": "fixtures/cert.pem", "keyfile": "fixtures/key.pem"}}, 1)
     assert loaded == [str(tmp_path / "fixtures/ca.pem"), (str(tmp_path / "fixtures/cert.pem"), str(tmp_path / "fixtures/key.pem"), None)]
@@ -266,7 +266,7 @@ def test_force_termination_keeps_completed_results_and_persists_evidence(tmp_pat
         index = command.index("-c") + 1
         command[index] = f"import sys; sys.path.insert(0, {str(plugin_dir)!r}); " + command[index]
         return real_popen(command, **kwargs)
-    monkeypatch.setattr("ai_apitest.execution.isolation.subprocess.Popen", with_test_plugin)
+    monkeypatch.setattr("iatest.execution.isolation.subprocess.Popen", with_test_plugin)
     cases = [Case("C1", "completed", "GET", "/ok"), Case("C2", "blocked", "GET", "/hang", variables={"marker": str(marker)})]
     setup_run(tmp_path, url, cases, hard_timeout_seconds=2, termination_grace_seconds=0.1, allow_plugins=True)
     config = load_config(tmp_path)
@@ -333,7 +333,7 @@ def test_dataset_expansion_is_bounded_and_does_not_duplicate_source_rows(tmp_pat
 
 
 def test_web_cannot_lower_configured_isolation(tmp_path, monkeypatch):
-    from ai_apitest.web import server
+    from iatest.web import server
     config = load_config(tmp_path)
     config["sandbox"]["mode"] = "container"
     save_config(tmp_path, config)
@@ -368,7 +368,7 @@ def test_container_stages_only_actual_uploads_and_uses_restricted_mounts(tmp_pat
 
 def test_container_missing_engine_fails_closed(tmp_path, local_api, monkeypatch):
     setup_run(tmp_path, local_api[0], [Case("C1", "test", "GET", "/ok")], mode="container", container_image="iatest:local")
-    monkeypatch.setattr("ai_apitest.execution.isolation.shutil.which", lambda name: None)
+    monkeypatch.setattr("iatest.execution.isolation.shutil.which", lambda name: None)
     with pytest.raises(ValueError, match="不会自动降低"):
         run_cases(tmp_path, project="demo")
     assert not local_api[2]

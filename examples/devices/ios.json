@@ -1,0 +1,9 @@
+{
+  "id": "ios-demo",
+  "platform": "ios",
+  "device_id": "REPLACE_WITH_DEVICE_UDID",
+  "app_id": "com.example.shop",
+  "xctestrun": "/absolute/path/to/Build/Products/IATestMobile_iphoneos.xctestrun",
+  "runner_port": 8101,
+  "simulator": false
+}

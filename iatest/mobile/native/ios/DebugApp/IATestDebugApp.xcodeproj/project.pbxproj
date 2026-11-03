@@ -1,0 +1,24 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1; classes = {}; objectVersion = 56;
+ objects = {
+ B00000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600;}; buildConfigurationList = B00000000000000000000002; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = B00000000000000000000003; productRefGroup = B00000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (B00000000000000000000005);};
+ B00000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000010, B00000000000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+ B00000000000000000000003 = {isa = PBXGroup; children = (B00000000000000000000006, B00000000000000000000014, B00000000000000000000004); sourceTree = "<group>";};
+ B00000000000000000000004 = {isa = PBXGroup; children = (B00000000000000000000007); name = Products; sourceTree = "<group>";};
+ B00000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000008; buildPhases = (B00000000000000000000009, B0000000000000000000000A, B0000000000000000000000B); buildRules = (); dependencies = (); name = IATestDebugApp; productName = IATestDebugApp; productReference = B00000000000000000000007; productType = "com.apple.product-type.application";};
+ B00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = Main.m; sourceTree = "<group>";};
+ B00000000000000000000007 = {isa = PBXFileReference; explicitFileType = wrapper.application; path = IATestDebugApp.app; sourceTree = BUILT_PRODUCTS_DIR;};
+ B00000000000000000000008 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000012, B00000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+ B00000000000000000000009 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B0000000000000000000000C, B00000000000000000000015); runOnlyForDeploymentPostprocessing = 0;};
+ B0000000000000000000000A = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+ B0000000000000000000000B = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+ B0000000000000000000000C = {isa = PBXBuildFile; fileRef = B00000000000000000000006;};
+ B00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ../../bridge/ios/IATestBridge.m; sourceTree = "<group>";};
+ B00000000000000000000015 = {isa = PBXBuildFile; fileRef = B00000000000000000000014;};
+ B00000000000000000000010 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 15.0;}; name = Debug;};
+ B00000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 15.0;}; name = Release;};
+ B00000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "IATest Lab"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.iatest.mobile.lab; PRODUCT_NAME = "$(TARGET_NAME)"; EXECUTABLE_NAME = lab; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; MARKETING_VERSION = 1.0; CURRENT_PROJECT_VERSION = 1; GCC_OPTIMIZATION_LEVEL = 0; GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)"); OTHER_LDFLAGS = "$(inherited) -framework UIKit -framework WebKit -framework Metal";}; name = Debug;};
+ B00000000000000000000013 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = "IATest Lab"; INFOPLIST_KEY_UILaunchScreen_Generation = YES; INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES; PRODUCT_BUNDLE_IDENTIFIER = dev.iatest.mobile.lab; PRODUCT_NAME = "$(TARGET_NAME)"; EXECUTABLE_NAME = lab; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; MARKETING_VERSION = 1.0; CURRENT_PROJECT_VERSION = 1; OTHER_LDFLAGS = "$(inherited) -framework UIKit -framework WebKit -framework Metal";}; name = Release;};
+ }; rootObject = B00000000000000000000001;
+}

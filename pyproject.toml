@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iatest-framework"
-version = "1.1.0"
-description = "AI-driven API test automation framework"
+version = "2.0.0"
+description = "AI-driven API, UI, performance and security test automation framework"
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "wzl" }]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-keywords = ["api", "automation", "llm", "mock", "testing"]
+keywords = ["api", "ui", "performance", "security", "automation", "llm", "testing"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
@@ -26,11 +26,13 @@ classifiers = [
 ]
 dependencies = [
   "apscheduler>=3.10,<4",
+  "h2>=4.2,<5",
   "httpx[socks]>=0.27,<1",
   "jinja2>=3.1,<4",
   "json-repair>=0.30,<1",
   "jsonschema>=4.23,<5",
   "jsonpath-ng>=1.7,<2",
+  "protobuf>=5,<8",
   "pyyaml>=6,<7",
   "rich>=13,<15",
   "typer>=0.12,<1",
@@ -38,9 +40,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8,<9"]
+hid = ["pypinyin>=0.55,<1"]
+database = [
+  "psycopg[binary]>=3.3,<4",
+  "PyMySQL[rsa]>=1.1,<2",
+  "sqlglot>=30.24,<31",
+]
 
 [project.scripts]
-iatest = "ai_apitest.cli:main"
+iatest = "iatest.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/hinayoung23/IATest"
@@ -50,13 +58,43 @@ Releases = "https://github.com/hinayoung23/IATest/releases"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["ai_apitest*"]
+include = ["iatest*"]
 
 [tool.setuptools.package-data]
-ai_apitest = [
+iatest = [
   "prompts/*.md",
   "agents/identities/*.yaml",
   "web/static/*.css",
   "web/static/*.js",
+  "engines/*.js",
+  "engines/*.json",
+  "engines/desktop_native/*.swift",
+  "engines/desktop_native/*.ps1",
+  "engines/desktop_native/*.py",
+  "engines/desktop_native/gnome/*.js",
+  "engines/desktop_native/gnome/*.json",
+  "nodes/*.ps1",
   "web/templates/*.html",
+  "mobile/native/THIRD_PARTY_NOTICES.md",
+  "mobile/native/android/*.xml",
+  "mobile/native/android/res/xml/*.xml",
+  "mobile/native/android/src/dev/iatest/mobile/*.java",
+  "mobile/native/android-hid/*.xml",
+  "mobile/native/android-hid/res/values/*.xml",
+  "mobile/native/android-hid/src/dev/iatest/mobile/hid/*.java",
+  "mobile/native/android-lab/*.java",
+  "mobile/native/android-lab/*.xml",
+  "mobile/native/android-lab/*.md",
+  "mobile/native/android-lab/res/values/*.xml",
+  "mobile/native/bridge/android/*.java",
+  "mobile/native/bridge/ios/*.h",
+  "mobile/native/bridge/ios/*.m",
+  "mobile/native/ios/*.m",
+  "mobile/native/ios/*.h",
+  "mobile/native/ios/IATestMobile.xcodeproj/project.pbxproj",
+  "mobile/native/ios/IATestMobile.xcodeproj/xcshareddata/xcschemes/*.xcscheme",
+  "mobile/native/ios/DebugApp/*.m",
+  "mobile/native/ios/DebugApp/*.md",
+  "mobile/native/ios/DebugApp/IATestDebugApp.xcodeproj/project.pbxproj",
+  "mobile/native/ios/DebugApp/IATestDebugApp.xcodeproj/xcshareddata/xcschemes/*.xcscheme",
 ]

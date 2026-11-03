@@ -8,13 +8,38 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test on Python ${{ matrix.python-version }}
+  linux-desktop:
+    name: Real X11 AT-SPI acceptance
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install X11 and AT-SPI acceptance environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libatspi2.0-0 at-spi2-core dbus-x11 xvfb xauth openbox python3-gi gir1.2-gtk-3.0
+          python -m pip install ".[test]"
+      - name: Verify real Linux desktop input
+        env:
+          IATEST_TEST_LINUX_DESKTOP: '1'
+        run: xvfb-run -a dbus-run-session -- bash -c 'openbox > /tmp/iatest-openbox.log 2>&1 & python -m pytest -q tests/test_linux_desktop.py'
+  test:
+    name: Test on ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - {os: ubuntu-latest, python-version: '3.11'}
+          - {os: ubuntu-latest, python-version: '3.12'}
+          - {os: ubuntu-latest, python-version: '3.13'}
+          - {os: ubuntu-latest, python-version: '3.14'}
+          - {os: macos-latest, python-version: '3.14'}
+          - {os: windows-latest, python-version: '3.14'}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -26,13 +51,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install package and test dependencies
-        run: python -m pip install ".[test]"
+        run: python -m pip install ".[test,database,hid]"
       - name: Run tests
         run: python -m pytest -q
 
   build:
     name: Build distribution
-    needs: test
+    needs: [test, linux-desktop]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -57,9 +82,44 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  install-smoke:
+    name: Clean base wheel / ${{ matrix.os }} / Python ${{ matrix.python }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, python: '3.11'}
+          - {os: ubuntu-latest, python: '3.14'}
+          - {os: macos-latest, python: '3.14'}
+          - {os: windows-latest, python: '3.14'}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Install only the base wheel and check CLI, process worker and Web assets
+        shell: python
+        run: |
+          import pathlib, subprocess, sys, tempfile, venv
+          with tempfile.TemporaryDirectory(prefix="iatest-clean-install-") as temporary:
+              target = pathlib.Path(temporary)
+              venv.EnvBuilder(with_pip=True).create(target)
+              python = target / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+              wheel, = pathlib.Path("dist").glob("*.whl")
+              subprocess.check_call([str(python), "-m", "pip", "install", str(wheel.resolve())])
+              subprocess.check_call([str(python), "-I", "scripts/validate_package_install.py"])
+
   publish:
     name: Publish distribution to PyPI
-    needs: build
+    needs: [build, install-smoke]
     runs-on: ubuntu-latest
     environment:
       name: pypi

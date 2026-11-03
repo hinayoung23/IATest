@@ -1,0 +1,18 @@
+{
+  "id": "safari-login",
+  "kind": "web",
+  "contract_version": 1,
+  "budget": {"timeout_seconds": 60, "max_actions": 10, "max_queries": 20, "max_evidence_bytes": 8388608},
+  "spec": {
+    "browser": "webkit",
+    "network_policy": "navigation_only",
+    "allowed_origins": ["http://127.0.0.1:8766"],
+    "start_url": "http://127.0.0.1:8766/ui",
+    "steps": [
+      {"op": "fill", "target": {"label": "Username"}, "value": "Safari Tester"},
+      {"op": "click", "target": {"role": "button", "name": "Sign in"}},
+      {"op": "expect", "target": {"id": "status"}, "assert": "text", "expected": "Hello Safari Tester"},
+      {"op": "screenshot", "target": {"selector": "main"}}
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "id": "accessibility", "kind": "accessibility",
+  "spec": {"allowed_origins": ["http://127.0.0.1:8767"], "start_url": "http://127.0.0.1:8767/ui", "checks": [
+    {"id": "login-name", "rule": "accessible_name", "target": {"id": "login"}}
+  ]}
+}

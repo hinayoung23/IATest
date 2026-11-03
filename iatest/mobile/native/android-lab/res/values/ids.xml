@@ -1,0 +1,9 @@
+<resources>
+  <item type="id" name="ready_label" /><item type="id" name="version_label" />
+  <item type="id" name="nickname_field" /><item type="id" name="save_button" />
+  <item type="id" name="saved_status" /><item type="id" name="reset_button" />
+  <item type="id" name="gesture_pad" /><item type="id" name="hybrid_button" />
+  <item type="id" name="hybrid_webview" /><item type="id" name="item_list" />
+  <item type="id" name="jank_button" /><item type="id" name="clipboard_button" />
+  <item type="id" name="clipboard_status" />
+</resources>

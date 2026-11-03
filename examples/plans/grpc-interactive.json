@@ -1,0 +1,70 @@
+{
+  "id": "grpc-interactive",
+  "kind": "protocol",
+  "budget": {
+    "timeout_seconds": 75,
+    "max_requests": 1
+  },
+  "spec": {
+    "transport": "grpc",
+    "endpoint": "grpc://127.0.0.1:50051/test.Echo/Call",
+    "allowed_origins": [
+      "http://127.0.0.1:50051"
+    ],
+    "protobuf": {
+      "descriptor_set_base64": "CmwKEWludGVyYWN0aXZlLnByb3RvEgR0ZXN0IhcKB01lc3NhZ2USDAoEdGV4dBgBIAEoCTIwCgRFY2hvEigKBENhbGwSDS50ZXN0Lk1lc3NhZ2UaDS50ZXN0Lk1lc3NhZ2UoATABYgZwcm90bzM=",
+      "sha256": "328e1440722faf8cc41155d815a425c01f50e4beffdbed41c49f6ebfadaaac66"
+    },
+    "exchanges": [
+      {
+        "op": "rpc",
+        "rpc_type": "bidi",
+        "dialogue_timeout_seconds": 60,
+        "max_messages": 100,
+        "expected_grpc_status": 0,
+        "dialogue": [
+          {
+            "op": "send",
+            "message": {
+              "text": "start"
+            }
+          },
+          {
+            "op": "receive",
+            "expected_schema": {
+              "type": "object",
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000
+                }
+              }
+            }
+          },
+          {
+            "op": "send",
+            "message": {
+              "text": {
+                "$reply": "$.text"
+              }
+            }
+          },
+          {
+            "op": "receive",
+            "expected_message": {
+              "text": "ack"
+            }
+          },
+          {
+            "op": "half_close"
+          }
+        ]
+      }
+    ]
+  }
+}

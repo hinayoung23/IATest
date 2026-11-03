@@ -1,0 +1,10 @@
+{
+  "profile": "ios-lab", "mode": "scroll",
+  "target_identifier": "item_list", "origin_identifier": "item_1",
+  "configuration_id": "replace-with-actual-configuration-id",
+  "iterations": 3, "hitch_collector": "signpost",
+  "bindings": {"hitch_ratio": {
+    "identifier": "com.apple.dt.XCTMetric_OSSignpost-Scroll_DraggingAndDeceleration.animation.hitch.time.ratio",
+    "unit": "ms per s"
+  }}
+}

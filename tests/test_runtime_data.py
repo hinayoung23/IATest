@@ -6,13 +6,13 @@ import threading
 import httpx
 import pytest
 
-from ai_apitest.core.models import Assertion, TestCase as Case, TestStep as Step
-from ai_apitest.core.serde import case_from_dict
-from ai_apitest.core.schema import schema_errors
-from ai_apitest.execution.data_generation import generate_values
-from ai_apitest.execution.datasets import expand_cases
-from ai_apitest.execution.options import RunOptions
-from ai_apitest.execution.runner import run_ordered_cases
+from iatest.core.models import Assertion, TestCase as Case, TestStep as Step
+from iatest.core.serde import case_from_dict
+from iatest.core.schema import schema_errors
+from iatest.execution.data_generation import generate_values
+from iatest.execution.datasets import expand_cases
+from iatest.execution.options import RunOptions
+from iatest.execution.runner import run_ordered_cases
 
 
 @pytest.fixture
@@ -55,10 +55,10 @@ def echo_service():
 
 
 def runtime_project(root, url, case, *, mode="policy", max_requests=None, schema=None):
-    from ai_apitest.core.config import load_config, save_config
-    from ai_apitest.core.paths import project_docs_file
-    from ai_apitest.core.serde import write_json
-    from ai_apitest.generator.cases import save_cases
+    from iatest.core.config import load_config, save_config
+    from iatest.core.paths import project_docs_file
+    from iatest.core.serde import write_json
+    from iatest.generator.cases import save_cases
     config = load_config(root)
     config["environments"]["local"]["base_url"] = url
     config["execution"].update(parallel=1, max_requests=max_requests)
@@ -70,10 +70,10 @@ def runtime_project(root, url, case, *, mode="policy", max_requests=None, schema
 
 @pytest.mark.parametrize("mode", ["policy", "process"])
 def test_real_http_generation_contracts_and_failed_replay(tmp_path, echo_service, mode):
-    from ai_apitest.execution.runner import run_cases
-    from ai_apitest.report.storage import current_run_results
-    from ai_apitest.core.paths import project_docs_file
-    from ai_apitest.core.serde import write_json
+    from iatest.execution.runner import run_cases
+    from iatest.report.storage import current_run_results
+    from iatest.core.paths import project_docs_file
+    from iatest.core.serde import write_json
     url, received = echo_service
     rules = {"name": {"kind": "string", "minLength": 12, "maxLength": 12}, "age": {"kind": "integer", "minimum": 0, "maximum": 1000}}
     schema = {"type": "object", "required": ["name", "age"], "properties": {"name": {"type": "string", "minLength": 12, "maxLength": 12}, "age": {"type": "integer", "minimum": 18, "maximum": 65}}, "additionalProperties": False}
@@ -87,7 +87,7 @@ def test_real_http_generation_contracts_and_failed_replay(tmp_path, echo_service
     replay = run_cases(tmp_path, project="demo", options=RunOptions(replay_run=first[0].run_id))
     assert [row.generated_data for row in replay] == [row.generated_data for row in first]
     assert [data for _, _, data in received[4:]] == [row.generated_data for row in first]
-    from ai_apitest.execution.runner import load_cases
+    from iatest.execution.runner import load_cases
     source_cases = load_cases(tmp_path, "demo")
     assert current_run_results(tmp_path, "demo", source_cases)[source_cases[0].id]["status"] == "failed"
     write_json(project_docs_file(tmp_path, "demo"), [])
@@ -97,7 +97,7 @@ def test_real_http_generation_contracts_and_failed_replay(tmp_path, echo_service
 
 
 def test_generated_cross_field_violation_blocks_http_and_negative_is_preserved(tmp_path, echo_service):
-    from ai_apitest.execution.runner import run_cases
+    from iatest.execution.runner import run_cases
     url, received = echo_service
     schema = {"type": "object", "properties": {"age": {"type": "integer"}}, "required": ["age"], "not": {"properties": {"age": {"const": 18}}}}
     case = Case("TC-USER-0001", "user", "POST", "/echo", data_generation={"age": {"kind": "integer", "const": 18}}, body={"age": "{{age}}"})
@@ -112,7 +112,7 @@ def test_generated_cross_field_violation_blocks_http_and_negative_is_preserved(t
 
 @pytest.mark.parametrize("mode", ["policy", "process"])
 def test_real_http_request_budget_includes_polling_and_preserves_cleanup(tmp_path, echo_service, mode):
-    from ai_apitest.execution.runner import run_cases
+    from iatest.execution.runner import run_cases
     url, received = echo_service
     case = Case("TC-USER-0001", "poll", "GET", "/poll", poll={"interval_seconds": 0.001, "timeout_seconds": 1}, assertions=[Assertion("json_path", "$.ready", expected=True)], cleanup_steps=[Step("delete", "DELETE", "/cleanup")])
     runtime_project(tmp_path, url, case, mode=mode, max_requests=2)
@@ -123,8 +123,8 @@ def test_real_http_request_budget_includes_polling_and_preserves_cleanup(tmp_pat
 
 
 def test_partitions_rotate_record_failures_and_fixed_seed_is_history_independent(tmp_path, echo_service):
-    from ai_apitest.execution.runner import run_cases
-    from ai_apitest.execution.sampling_plan import plan_samples
+    from iatest.execution.runner import run_cases
+    from iatest.execution.sampling_plan import plan_samples
     url, received = echo_service
     rules = {"age": {"kind": "integer", "minimum": 18, "maximum": 65, "partitions": [{"name": "young", "schema": {"maximum": 25}}, {"name": "old", "schema": {"minimum": 50}}]}}
     case = Case("TC-USER-0001", "partition", "POST", "/echo", data_generation=rules, body={"age": "{{age}}"}, assertions=[Assertion("status_code", expected=201)])
@@ -145,7 +145,7 @@ def test_partitions_rotate_record_failures_and_fixed_seed_is_history_independent
 
 
 def test_dataset_values_override_generation_and_sensitive_replay_is_refused(tmp_path, echo_service):
-    from ai_apitest.execution.runner import run_cases
+    from iatest.execution.runner import run_cases
     url, received = echo_service
     case = Case("TC-USER-0001", "dataset", "POST", "/echo", data_generation={"token": {"kind": "string", "minLength": 12}}, dataset=[{"_id": "sample-0001", "token": "fixed-secret-value"}], samples=2, body={"token": "{{token}}"}, assertions=[Assertion("status_code", expected=201)])
     runtime_project(tmp_path, url, case)
@@ -173,8 +173,8 @@ def test_prefix_suffix_count_towards_generated_string_constraints():
 
 @pytest.mark.parametrize("mode", ["policy", "process"])
 def test_native_mcp_fixture_real_http_under_execution_policy(tmp_path, echo_service, mode):
-    from ai_apitest.core.config import load_config, save_config
-    from ai_apitest.execution.runner import run_cases
+    from iatest.core.config import load_config, save_config
+    from iatest.execution.runner import run_cases
     url, received = echo_service
     case = Case("TC-USER-0001", "fixture", "POST", "/echo", fixture_requirements=["data"], body={"id": "{{entity_id}}"}, assertions=[Assertion("json_path", "$.id", expected="entity-1")])
     runtime_project(tmp_path, url, case, mode=mode)
@@ -188,8 +188,8 @@ def test_native_mcp_fixture_real_http_under_execution_policy(tmp_path, echo_serv
 
 
 def test_runtime_generation_survives_scenario_compilation():
-    from ai_apitest.core.models import Endpoint
-    from ai_apitest.domain.case_drafts import compile_scenario_drafts, validate_compiled_cases
+    from iatest.core.models import Endpoint
+    from iatest.domain.case_drafts import compile_scenario_drafts, validate_compiled_cases
     endpoint = Endpoint("POST", "/users", request_body={"required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["age"], "properties": {"age": {"type": "integer", "minimum": 18, "maximum": 65}}}}}}, responses={"200": {}})
     draft = {"scenario_id": "SCN-001", "endpoint_method": "POST", "endpoint_path": "/users", "intent": "合法年龄", "design_method": "happy_path", "request_overrides": {"body": {"age": "{{age}}"}}, "data_generation": {"age": {"kind": "integer", "minimum": 18, "maximum": 65}}, "samples": 3, "expected_outcome": "返回 200", "expected_basis": "responses.200", "assertions": [{"type": "status_code", "expected": 200}]}
     compiled = compile_scenario_drafts([draft], [endpoint])

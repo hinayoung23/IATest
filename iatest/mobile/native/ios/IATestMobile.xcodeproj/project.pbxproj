@@ -1,0 +1,31 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1; classes = {}; objectVersion = 56;
+ objects = {
+ A00000000000000000000001 = {isa = PBXProject; attributes = {LastUpgradeCheck = 1600;}; buildConfigurationList = A00000000000000000000002; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, Base); mainGroup = A00000000000000000000003; productRefGroup = A00000000000000000000004; projectDirPath = ""; projectRoot = ""; targets = (A00000000000000000000005);};
+ A00000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000010, A00000000000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+ A00000000000000000000003 = {isa = PBXGroup; children = (A00000000000000000000006, A00000000000000000000014, A00000000000000000000015, A00000000000000000000017, A00000000000000000000018, A00000000000000000000020, A00000000000000000000021, A00000000000000000000004); sourceTree = "<group>";};
+ A00000000000000000000004 = {isa = PBXGroup; children = (A00000000000000000000007); name = Products; sourceTree = "<group>";};
+ A00000000000000000000005 = {isa = PBXNativeTarget; buildConfigurationList = A00000000000000000000008; buildPhases = (A00000000000000000000009, A0000000000000000000000A, A0000000000000000000000B); buildRules = (); dependencies = (); name = IATestMobileTests; productName = IATestMobileTests; productReference = A00000000000000000000007; productType = "com.apple.product-type.bundle.ui-testing";};
+ A00000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = MobileRunner.m; sourceTree = "<group>";};
+ A00000000000000000000007 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = IATestMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR;};
+ A00000000000000000000008 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000012, A00000000000000000000013); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+ A00000000000000000000009 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000000C, A00000000000000000000016, A00000000000000000000019, A00000000000000000000022); runOnlyForDeploymentPostprocessing = 0;};
+ A0000000000000000000000A = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+ A0000000000000000000000B = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0;};
+ A0000000000000000000000C = {isa = PBXBuildFile; fileRef = A00000000000000000000006;};
+ A00000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = VideoServer.m; sourceTree = "<group>";};
+ A00000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VideoServer.h; sourceTree = "<group>";};
+ A00000000000000000000016 = {isa = PBXBuildFile; fileRef = A00000000000000000000014;};
+ A00000000000000000000017 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = Gestures.m; sourceTree = "<group>";};
+ A00000000000000000000018 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Gestures.h; sourceTree = "<group>";};
+ A00000000000000000000019 = {isa = PBXBuildFile; fileRef = A00000000000000000000017;};
+ A00000000000000000000020 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NetworkTransport.m; sourceTree = "<group>";};
+ A00000000000000000000021 = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NetworkTransport.h; sourceTree = "<group>";};
+ A00000000000000000000022 = {isa = PBXBuildFile; fileRef = A00000000000000000000020;};
+ A00000000000000000000010 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 15.0;}; name = Debug;};
+ A00000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 15.0;}; name = Release;};
+ A00000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = IATest; INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to the paired IATest controller for encrypted test observations"; PRODUCT_BUNDLE_IDENTIFIER = dev.iatest.mobile.tests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; GCC_OPTIMIZATION_LEVEL = 0; OTHER_LDFLAGS = "$(inherited) -framework XCTest -framework UIKit -framework Security";}; name = Debug;};
+ A00000000000000000000013 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = IATest; INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connect to the paired IATest controller for encrypted test observations"; PRODUCT_BUNDLE_IDENTIFIER = dev.iatest.mobile.tests; PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = "1,2"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; OTHER_LDFLAGS = "$(inherited) -framework XCTest -framework UIKit -framework Security";}; name = Release;};
+ }; rootObject = A00000000000000000000001;
+}

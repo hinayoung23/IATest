@@ -1,0 +1,9 @@
+{
+  "id": "order-authorization", "kind": "security", "contract_version": 1,
+  "budget": {"timeout_seconds": 30, "max_requests": 10},
+  "spec": {
+    "allowed_origins": ["http://127.0.0.1:8766"],
+    "identities": {"owner": {"Authorization": {"$env": "IATEST_LAB_OWNER"}}, "challenger": {"Authorization": {"$env": "IATEST_LAB_OTHER"}}},
+    "checks": [{"id": "order-authorization", "rule": "authorization", "owner": "owner", "challenger": "challenger", "request": {"url": "http://127.0.0.1:8766/secure-order"}, "marker": {"path": "$.id", "expected": "order-1"}, "denied_status": [401, 403, 404]}]
+  }
+}

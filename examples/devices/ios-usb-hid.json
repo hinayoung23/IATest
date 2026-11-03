@@ -1,0 +1,13 @@
+{
+  "id": "ios-usb-hid",
+  "platform": "ios",
+  "device_id": "REPLACE_WITH_IPHONE_UDID",
+  "app_id": "dev.iatest.mobile.lab",
+  "xctestrun": "/absolute/Runner.xctestrun",
+  "ios_input_backend": "usb_hid",
+  "usb_hid": {
+    "endpoint": "http://127.0.0.1:19430",
+    "binding_id": "owned-iphone-cable",
+    "token_env": "IATEST_USB_HID_TOKEN"
+  }
+}

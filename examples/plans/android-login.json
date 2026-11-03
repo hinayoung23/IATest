@@ -1,0 +1,18 @@
+{
+  "contract_version": 1,
+  "id": "android-login",
+  "title": "Login and verify the displayed result",
+  "kind": "android",
+  "budget": {"timeout_seconds": 60, "max_actions": 3, "max_queries": 30, "max_evidence_bytes": 8388608},
+  "spec": {
+    "profile": "android-demo",
+    "cache": true,
+    "steps": [
+      {"op": "text", "target": {"identifier": "com.example.shop:id/username"}, "mode": "semantic", "value": "测试用户😀"},
+      {"op": "find", "target": {"identifier": "com.example.shop:id/login"}, "bind": "login"},
+      {"op": "tap", "ref": "login"},
+      {"op": "expect", "target": {"identifier": "com.example.shop:id/status"}, "attribute": "text", "operator": "eq", "expected": "登录成功", "timeout_ms": 5000},
+      {"op": "screenshot"}
+    ]
+  }
+}

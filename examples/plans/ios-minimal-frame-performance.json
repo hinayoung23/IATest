@@ -1,0 +1,32 @@
+{
+  "id": "ios-minimal-frame-journey",
+  "kind": "client_performance",
+  "budget": {"timeout_seconds": 240},
+  "spec": {
+    "platform": "ios",
+    "iterations": 1,
+    "warmup": 0,
+    "ios_capture": {
+      "mode": "attach",
+      "tool_launch": "isolated_copy",
+      "template": "frame_lifetimes",
+      "stop_strategy": "time_limit",
+      "duration_seconds": 15,
+      "max_trace_bytes": 268435456,
+      "finalize_timeout_seconds": 45
+    },
+    "thresholds": {"max_frame_lifetime_ms": 50},
+    "plan": {
+      "id": "ios-existing-scroll",
+      "kind": "ios",
+      "spec": {
+        "profile": "iphone-lab",
+        "steps": [
+          {"op": "expect", "target": {"identifier": "ready_label"}, "attribute": "text", "expected": "Ready", "timeout_ms": 10000},
+          {"op": "swipe", "target": {"identifier": "item_list"}, "direction": "up"},
+          {"op": "expect", "target": {"identifier": "ready_label"}, "attribute": "text", "expected": "Ready", "timeout_ms": 10000}
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "android-estimated-battery",
+  "kind": "client_performance",
+  "spec": {
+    "platform": "android",
+    "iterations": 1,
+    "thresholds": {
+      "max_app_estimated_battery_mah": 1
+    },
+    "plan": {
+      "id": "android-toggle",
+      "kind": "android",
+      "spec": {
+        "profile": "android-demo",
+        "steps": [
+          {
+            "op": "tap",
+            "target": {
+              "identifier": "dev.iatest.mobile.lab:id/option_toggle"
+            }
+          },
+          {
+            "op": "expect",
+            "target": {
+              "identifier": "dev.iatest.mobile.lab:id/option_status"
+            },
+            "attribute": "text",
+            "expected": "Option on"
+          }
+        ]
+      }
+    }
+  }
+}
