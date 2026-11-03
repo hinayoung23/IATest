@@ -189,6 +189,9 @@ def test_process_web_evidence_is_returned_and_persisted_by_parent(isolated):
     if not chromium_path():
         pytest.skip("Requires Chromium")
     root, base, _, _ = isolated
+    config = load_config(root)
+    config["sandbox"]["memory_mb"] = 2048
+    save_config(root, config)
     result = execute_test_plan(
         root,
         "suite",

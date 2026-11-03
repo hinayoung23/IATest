@@ -52,6 +52,9 @@ jobs:
           cache: pip
       - name: Install package and test dependencies
         run: python -m pip install ".[test,database,hid]"
+      - name: Verify Linux browser process budget
+        if: runner.os == 'Linux'
+        run: python scripts/validate_browser_budget.py
       - name: Run tests
         run: python -m pytest -q
 

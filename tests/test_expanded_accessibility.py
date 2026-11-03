@@ -36,7 +36,7 @@ def test_wcag_checklist_keeps_manual_gaps_and_binds_review_to_actual_build(
     threading.Thread(target=server.serve_forever, daemon=True).start()
     init_project(tmp_path, "suite")
     config = load_config(tmp_path)
-    config["sandbox"]["mode"] = mode
+    config["sandbox"].update(mode=mode, memory_mb=2048)
     save_config(tmp_path, config)
     base = f"http://127.0.0.1:{server.server_port}"
     plan = {

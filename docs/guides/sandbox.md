@@ -43,6 +43,8 @@ iatest fixtures-check --project demo --probe
 
 `--isolation` 只覆盖当前 CLI 运行，不修改配置。Web 用例页面可选择使用项目配置、独立进程或容器。`fixtures-check` 在配置为 process/container 时也通过隔离工作进程执行，包括插件加载、自检和 prepare/cleanup。
 
+`memory_mb` 默认 512 MiB，属于轻量任务的预算。完整浏览器可显式配置为 2048 MiB，再根据浏览器版本和页面需求调整；框架不会自动扩大预算或移除浏览器沙箱。Linux 启动对照可运行 `python scripts/validate_browser_budget.py`，查看 512/2048 MiB 下的退出码和原始诊断。
+
 ## 文件边界
 
 请求体 `$iatest_file`、Multipart `file_path`、JSON/CSV 数据集、文档和本地 OpenAPI 外部引用共用文件检查和有界读取。相对执行文件路径以框架项目根目录为基准，与 CLI 启动目录无关。
@@ -69,7 +71,7 @@ CLI 明确指定的本地文档可以位于项目外，其同目录引用仍受 
 
 可信插件需显式设置 `allow_plugins=true`，仍通过已安装包的 `iatest.plugins` entry point 注册。应用策略和普通子进程不能限制插件自己调用 Python 文件或网络 API。运行不可信插件时应使用容器并只提供测试凭据。
 
-每个已完成用例立即保存临时结果检查点。取消或达到硬时限后，先请求协作取消，最多等待 `termination_grace_seconds`，再终止工作进程。需要等待较长的清理逻辑时，应适当增加这个宽限时间。POSIX 使用进程组；Windows 使用 Job Object，并在插件运行前完成启动握手。Linux 进程额外限制地址空间、CPU 时间和单文件大小；Windows Job 限制内存、CPU 时间和活动进程数。macOS 进程模式不保证硬内存限制，严格资源配额使用容器。
+每个已完成用例立即保存临时结果检查点。取消或达到硬时限后，先请求协作取消，最多等待 `termination_grace_seconds`，再终止工作进程。需要等待较长的清理逻辑时，应适当增加这个宽限时间。POSIX 使用进程组；Windows 使用 Job Object，并在插件运行前完成启动握手。Linux 4.7+ 进程限制每个进程的可写数据内存（含匿名 mmap）、CPU 时间和单文件大小，旧内核使用地址空间限制；进程内存配额不等同于整个进程树的驻留内存总额。Windows Job 限制内存、CPU 时间和活动进程数。macOS 进程模式不保证硬内存限制，严格资源配额使用容器。
 
 主进程保留已完成的结果，未完成用例记录为 cancelled/failed。无法确认环境 teardown 完成时，不将已完成的用例报告为通过；中断运行不会因已有检查点而被判定为整体成功。运行元数据记录隔离模式、命名空间、完成状态、强制终止和中断原因。临时凭据和结果目录在退出后清理。
 

@@ -469,11 +469,11 @@ def main():
                     }
                 )
             except (ValueError, RuntimeError, OSError, TimeoutError) as exc:
-                emit({"error": str(exc)[:500], "pending": browser.pending})
+                emit({"error": str(exc)[:4000], "pending": browser.pending})
                 if browser.pending:
                     break
     except (ValueError, RuntimeError, OSError) as exc:
-        emit({"error": str(exc)[:500]})
+        emit({"error": str(exc)[:4000]})
     finally:
         if browser:
             browser.close()

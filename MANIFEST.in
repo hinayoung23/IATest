@@ -61,6 +61,7 @@ include scripts/validate_ios_performance_console.cjs
 include scripts/validate_lan_windows.py
 include scripts/validate_windows_desktop.py
 include scripts/validate_package_install.py
+include scripts/validate_browser_budget.py
 recursive-include tests/fixtures/ios *.xml *.md
 recursive-include iatest/mobile/native/bridge *.java *.h *.m
 include scripts/benchmark_ui.py

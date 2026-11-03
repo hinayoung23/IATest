@@ -14,7 +14,7 @@ def test_persistent_browser_process_excludes_secrets_and_blocks_arbitrary_script
 ):
     root, base, _ = advanced
     config = load_config(root)
-    config["sandbox"]["mode"] = "process"
+    config["sandbox"].update(mode="process", memory_mb=2048)
     save_config(root, config)
     session = BrowserSession(
         root,
@@ -44,7 +44,7 @@ def test_persistent_browser_process_excludes_secrets_and_blocks_arbitrary_script
 def test_browser_process_cancel_reaps_owned_worker(advanced):
     root, base, _ = advanced
     config = load_config(root)
-    config["sandbox"]["mode"] = "process"
+    config["sandbox"].update(mode="process", memory_mb=2048)
     save_config(root, config)
     control = RunControl(timeout_seconds=25)
     session = BrowserSession(
