@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
@@ -634,4 +635,10 @@ def context_trend(project: str = "default", limit: int = 10) -> None:
 
 
 def main() -> None:
+    # Redirected Windows output can use a code page without Chinese glyphs.
+    # Preserve the selected encoding and escape unsupported characters rather
+    # than crashing before a command can execute.
+    for stream in (sys.stdout, sys.stderr):
+        if callable(getattr(stream, "reconfigure", None)):
+            stream.reconfigure(errors="backslashreplace")
     app()

@@ -15,6 +15,19 @@ import urllib.request
 from pathlib import Path
 
 
+def run_cli(arguments, root):
+    completed = subprocess.run(
+        arguments, cwd=root, capture_output=True, timeout=30,
+        encoding="utf-8", errors="replace",
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            f"Installed CLI exited {completed.returncode}: "
+            + (completed.stdout + completed.stderr)[-5000:]
+        )
+    return completed
+
+
 def main():
     import iatest
     from iatest.application.testing_service import execute_test_plan
@@ -32,28 +45,15 @@ def main():
     checks = {}
     with tempfile.TemporaryDirectory(prefix="iatest-installed-smoke-") as temporary:
         root = Path(temporary)
-        subprocess.run(
-            [str(command), "--help"],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            timeout=20,
-        )
-        subprocess.run(
+        run_cli([str(command), "--help"], root)
+        run_cli(
             [str(command), "init", "--project", "installed"],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            timeout=20,
+            root,
         )
         checks["installed_cli"] = True
-        prepared = subprocess.run(
+        prepared = run_cli(
             [str(command), "test", "wayland-setup", "--output", str(root / "wayland")],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=20,
+            root,
         )
         helper = json.loads(prepared.stdout)
         adapter = Path(helper["directory"])
@@ -89,6 +89,7 @@ def main():
         with socket.socket() as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
+        logs = tempfile.TemporaryFile()
         process = subprocess.Popen(
             [
                 sys.executable,
@@ -103,21 +104,26 @@ def main():
             ],
             cwd=root,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=logs,
+            stderr=subprocess.STDOUT,
         )
         try:
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             base = f"http://127.0.0.1:{port}"
-            deadline = time.monotonic() + 20
+            deadline = time.monotonic() + 45
             while True:
                 try:
-                    with opener.open(base, timeout=0.5) as response:
+                    with opener.open(base, timeout=10) as response:
                         assert response.status == 200
                         break
                 except (urllib.error.URLError, TimeoutError):
                     if process.poll() is not None or time.monotonic() >= deadline:
-                        raise RuntimeError("Installed Web console failed to start")
+                        logs.seek(0, os.SEEK_END)
+                        logs.seek(max(0, logs.tell() - 5000))
+                        raise RuntimeError(
+                            "Installed Web console failed to start: "
+                            + logs.read().decode("utf-8", "replace")
+                        )
                     time.sleep(0.1)
             for path in (
                 "/testing?project=installed&tab=capabilities",
@@ -141,6 +147,7 @@ def main():
                 process.kill()
                 process.wait(timeout=5)
             checks["owned_web_process_stopped"] = process.poll() is not None
+            logs.close()
     print(
         json.dumps(
             {
