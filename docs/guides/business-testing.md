@@ -143,7 +143,7 @@ iatest node run worker-a web-smoke --project demo
 Windows 可从控制台“执行节点”生成启动包，也可使用以下 CLI；需要匹配控制端源码的当前 wheel、公共 CA 证书和可达控制端地址：
 
 ```bash
-iatest node windows-bundle windows-node.zip dist/iatest_framework-2.0.0-py3-none-any.whl /path/controller-ca.pem https://controller.example:8768 windows --origin https://test.example.com --token-env IATEST_NODE_A_TOKEN --project demo
+iatest node windows-bundle windows-node.zip dist/iatest_framework-2.0.1-py3-none-any.whl /path/controller-ca.pem https://controller.example:8768 windows --origin https://test.example.com --token-env IATEST_NODE_A_TOKEN --project demo
 ```
 
 在 Windows 解压后运行 `python .\start-node.py`，可通过 `--python-path` 指定已有 Python 3.11+，或通过 `--workspace` 指定尚不存在的独立目录。Python 入口只使用标准库，适用于系统禁用 PowerShell 脚本的环境；不修改执行策略。也保留 `powershell -NoProfile -File .\start-node.ps1`，使用 `-PythonPath`/`-Workspace` 参数。

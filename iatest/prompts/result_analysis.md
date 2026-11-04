@@ -76,12 +76,12 @@
 [
   {
     "scope": "endpoint",
-    "method": "GET",
-    "path": "/api/check/{email}",
+    "method": "POST",
+    "path": "/records",
     "lesson_type": "business_rule",
     "lesson_subtype": "response_pattern",
-    "title": "无效邮箱仍返回 200",
-    "content": "无效邮箱或过期邮箱返回 HTTP 200，响应体 valid=false，不应预期 404。",
+    "title": "创建记录的状态码应遵循当前接口契约",
+    "content": "仅当当前接口文档明确声明创建成功返回 201 时，才把 201 作为该接口的预期状态码；不要推广到其它接口。",
     "confidence": "high",
     "tags": ["status_code", "assertion_pattern"],
     "environment": ""

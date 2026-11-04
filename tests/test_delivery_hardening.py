@@ -83,11 +83,11 @@ def active_lesson(index: int, *, path: str | None = None, title: str | None = No
 
 def test_markdown_base_url_prefers_current_operational_address_over_recommendation() -> None:
     markdown = """
-- 当前 HTTP 基础地址：`http://mail.tempbox.cn`
-- 推荐 HTTPS 基础地址：`https://mail.tempbox.cn`
+- 当前 HTTP 基础地址：`http://mail.example.invalid`
+- 推荐 HTTPS 基础地址：`https://mail.example.invalid`
 """
 
-    assert detect_base_url(markdown) == "http://mail.tempbox.cn"
+    assert detect_base_url(markdown) == "http://mail.example.invalid"
 
 
 def test_business_rule_normalizer_accepts_scalar_fixture_fields() -> None:

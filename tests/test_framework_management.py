@@ -38,13 +38,13 @@ def test_business_rule_changes_invalidate_endpoint_signature():
     assert endpoint_signature(original) != endpoint_signature(changed)
 
 
-def test_project_specific_inference_is_scoped_and_has_no_assumed_ttl():
+def test_operation_names_do_not_enable_project_specific_inference():
     text = "同一个合法前缀已经存在时刷新邮箱创建时间"
     generic = normalize_business_rules([{"description": text}], method="GET", path="/accounts/create")
     assert not generic[0]["trigger"]["chain_steps"]
-    scoped = normalize_business_rules([{"description": text}], method="GET", path="/api/generate")
-    assertions = scoped[0]["trigger"]["chain_steps"][-1]["assertions"]
-    assert not any(item.get("expected") == 600 for item in assertions)
+    matching_name = normalize_business_rules([{"description": text}], method="GET", path="/api/generate")
+    assert not matching_name[0]["trigger"]["chain_steps"]
+    assert not any(item.get("expected") == 600 for item in matching_name[0]["expected"]["assertions"])
 
 
 def test_cache_invalidates_dependencies_but_reuses_independent_endpoints(tmp_path):

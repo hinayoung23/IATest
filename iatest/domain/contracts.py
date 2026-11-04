@@ -10,7 +10,7 @@ from iatest.core.models import Endpoint, TestCase
 from iatest.core.serde import to_jsonable
 
 
-TRUSTED_CONTRACT_VERSION = "2026-08-03.15"
+TRUSTED_CONTRACT_VERSION = "2026-11-04.1"
 BUSINESS_RULE_VERSION = "1"
 SUPPORTED_RULE_STRATEGIES = {
     "happy_path",
@@ -401,7 +401,7 @@ def drop_aggregate_lifecycle_rules(
                 or ""
             )
         )
-        != "renewable_mailbox_condition"
+        != "renewable_resource_condition"
     ]
 
 
@@ -537,11 +537,6 @@ def normalize_trigger(raw: dict[str, Any], semantic_text: str, *, method: str = 
         inferred_overrides, inferred_omissions = infer_request_trigger(semantic_text)
         trigger["request_overrides"] = inferred_overrides
         trigger["omit_fields"] = inferred_omissions
-    documented_chain = infer_documented_postcondition_chain(semantic_text, method=method, path=path)
-    if documented_chain:
-        # 这些链路是框架根据已识别 source_condition 编译出的可执行契约。
-        # 不保留模型早期提交的弱化版本，否则升级后的必要断言无法进入正式产物。
-        trigger["chain_steps"] = documented_chain
     return trigger
 
 
@@ -563,11 +558,6 @@ def normalize_missing_resource_trigger(
     if not path_params:
         overrides.pop("path_params", None)
     return result
-
-
-def infer_documented_postcondition_chain(text: str, *, method: str = "", path: str = "") -> list[dict[str, Any]]:
-    from iatest.adapters.tempbox import infer_documented_postcondition_chain as infer_chain
-    return infer_chain(text, method=method, path=path)
 
 
 def enrich_business_rule_contracts(
@@ -650,11 +640,6 @@ def enrich_business_rule_contracts(
             expected["assertions"] = merge_assertions(
                 expected.get("assertions") or [],
                 response_example_assertions(endpoint.responses, status),
-            )
-        elif isinstance(status, int) and 200 <= status < 300:
-            expected["assertions"] = merge_assertions(
-                expected.get("assertions") or [],
-                success_rule_assertions(endpoint.responses, semantic_text),
             )
         expectation_text = " ".join(
             [
@@ -1137,39 +1122,6 @@ def response_example_assertions(
     return assertions
 
 
-def success_rule_assertions(
-    responses: dict[str, Any],
-    semantic_text: str,
-) -> list[dict[str, Any]]:
-    response = responses.get("200") or responses.get(200)
-    if not isinstance(response, dict):
-        return []
-    media = response.get("content")
-    json_media = media.get("application/json") if isinstance(media, dict) else None
-    example = json_media.get("example") if isinstance(json_media, dict) else None
-    if not isinstance(example, dict):
-        return []
-    assertions: list[dict[str, Any]] = []
-    if re.search(r"续期|删除成功", semantic_text):
-        status = example.get("status")
-        if isinstance(status, str):
-            assertions.append(
-                {"type": "json_path", "target": "$.status", "operator": "eq", "expected": status}
-            )
-    if re.search(r"10\s*分钟|续期|有效期从当前时间|恢复为新的", semantic_text):
-        expires_in = example.get("expires_in")
-        if isinstance(expires_in, int) and not isinstance(expires_in, bool):
-            assertions.append(
-                {
-                    "type": "json_path",
-                    "target": "$.expires_in",
-                    "operator": "eq",
-                    "expected": expires_in,
-                }
-            )
-    return assertions
-
-
 def infer_request_trigger(text: str) -> tuple[dict[str, Any], list[str]]:
     lowered = compact_text(text).lower()
     if "prefix" in lowered or "前缀" in lowered:
@@ -1230,16 +1182,16 @@ def infer_assertion_obligations(text: str, *, status: int | None) -> list[dict[s
                 "expected": order.group(1),
             }
         )
-    if re.search(r"随机生成\s*8\s*位|random\s+8", text, flags=re.I):
-        assertions.append(
-            {
-                "type": "json_path",
-                "target": "$.email",
-                "operator": "matches",
-                "expected": r"^[A-Za-z0-9]{8}@mail\.tempbox\.cn$",
-            }
-        )
     domain = re.search(r"邮箱域名固定为\s*`?([A-Za-z0-9.-]+)`?", text, flags=re.I)
+    prefix_length = re.search(r"(?:随机生成|random)\s*(\d+)\s*(?:位|characters?)", text, re.I)
+    if prefix_length and len(prefix_length.group(1)) <= 4 and re.search(r"邮箱前缀|email\s+prefix", text, re.I):
+        count = int(prefix_length.group(1))
+        if 0 < count <= 1000:
+            suffix = re.escape(domain.group(1)) if domain else r"[^@\s]+"
+            assertions.append({
+                "type": "json_path", "target": "$.email", "operator": "matches",
+                "expected": rf"^[^@\s]{{{count}}}@{suffix}$",
+            })
     if domain:
         assertions.append(
             {
@@ -1270,7 +1222,7 @@ def infer_assertion_obligations(text: str, *, status: int | None) -> list[dict[s
                 "type": "json_path",
                 "target": "$.email",
                 "operator": "matches",
-                "expected": rf"^[A-Za-z0-9_-]+@{re.escape(generated.group(1))}$",
+                "expected": rf"^[^@\s]+@{re.escape(generated.group(1))}$",
             }
         )
     if re.search(r"valid\s*:\s*true", text, flags=re.I) and re.search(r"剩余秒数|expires_in\s*>\s*0", text):
@@ -1459,11 +1411,11 @@ def business_condition_signature(text: str) -> str:
             r"续期成功后.+(?:创建|刷新)时间.+(?:剩余有效期|expires_in)",
         ),
         (
-            "generate_refreshes_existing_mailbox",
+            "create_refreshes_existing_resource",
             r"同一个.*?前缀.*?邮箱(?:已经|已)存在.*刷新.*(?:创建时间|有效期)",
         ),
         (
-            "renewable_mailbox_condition",
+            "renewable_resource_condition",
             r"仍存在.+未超过.+保留窗口|未超过.+保留窗口.+可以续期",
         ),
         ("messages_sorted", r"received_at.+倒序|倒序.+received_at"),

@@ -421,7 +421,7 @@ def build_dependency_chain_case(generator: Endpoint, target: Endpoint, field_nam
     target_name = target.summary or f"{target.method} {target.path}"
     case = TestCase(
         id=case_id,
-        title=f"生成邮箱后执行：{target_name}",
+        title=f"{generator.summary or f'{generator.method} {generator.path}'}后执行：{target_name}",
         method="CHAIN",
         path=f"{generator.path} -> {target.path}",
         priority=normalize_priority("", negative=False, design_method="dependency_chain"),
@@ -491,7 +491,9 @@ def first_path_param(endpoint: Endpoint) -> str:
 def likely_produced_fields(endpoint: Endpoint) -> set[str]:
     """Return only response fields proved by the documented response schema."""
     fields: set[str] = set()
-    for response in endpoint.responses.values():
+    for status, response in endpoint.responses.items():
+        if not (str(status).isdigit() and 200 <= int(status) < 300) and str(status).upper() != "2XX":
+            continue
         if not isinstance(response, dict):
             continue
         schemas: list[Any] = [response.get("schema")]

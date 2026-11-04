@@ -799,7 +799,7 @@ _EN: dict[str, str] = {
     "记录角色、模型、Token、工具调用、上下文恢复和证据数量。": "Records roles, models, tokens, tool calls, context recovery, and evidence counts.",
     "。 运行中保存的新配置将在关闭并重新开启后生效；也可以单独运行": ". Saved changes take effect after restarting the listener; you can also run",
     "pending 经验不会自动注入；确认后才会参与后续生成和分析。": "Pending knowledge is not injected until it has been confirmed.",
-    "例如 tempbox、order-service、crm-api": "For example: tempbox, order-service, crm-api",
+    "例如 demo、order-service、crm-api": "For example: demo, order-service, crm-api",
     "例如：补充 prefix 包含中文、特殊字符、重复前缀时的异常用例": "Example: add negative cases for Unicode, special characters, and repeated prefixes",
     "Web 页面只读展示运行架构；模式切换仅允许通过项目 JSON 完成。": "The Web UI shows runtime architecture as read-only; modes can only be changed in project JSON.",
     "接口识别、用例生成、报告分析、治理和用例维护均使用推荐的受限角色与工具链。": "Discovery, generation, analysis, governance, and maintenance use restricted roles and tools.",
@@ -1557,7 +1557,7 @@ _JA.update(
     {
         "smoke, 用户模块": "smoke, user-module", "v1.0.3 · 项目：demo": "v1.0.3 · プロジェクト：demo",
         "上次通过率": "前回の合格率", "不需要": "不要", "与上次比较": "前回との比較", "主控模型连通性测试中": "プライマリモデルの接続をテスト中",
-        "主流程": "正常系", "以断言列表为准。": "アサーション一覧を参照してください。", "例如 tempbox、order-service、crm-api": "例：tempbox、order-service、crm-api",
+        "主流程": "正常系", "以断言列表为准。": "アサーション一覧を参照してください。", "例如 demo、order-service、crm-api": "例：demo、order-service、crm-api",
         "例如：补充 prefix 包含中文、特殊字符、重复前缀时的异常用例": "例：Unicode、特殊文字、重複prefixの異常ケースを追加",
         "依赖测试数据": "テストデータが必要", "依赖环境": "環境に依存", "依赖环境行为": "環境動作に依存", "依赖链": "依存関係チェーン",
         "依赖项目方外部测试能力": "プロジェクト側の外部テスト機能が必要", "保存时会重新执行接口引用、请求契约、断言语义和链路变量门禁；不符合交付标准的修改不会写入文件。": "保存時にAPI参照、リクエスト契約、アサーション、依存変数の品質ゲートを再実行し、無効な変更は書き込みません。",
@@ -1582,7 +1582,7 @@ _FR.update(
     {
         "smoke, 用户模块": "smoke, module-utilisateur", "v1.0.3 · 项目：demo": "v1.0.3 · Projet : demo",
         "上次通过率": "Taux de réussite précédent", "不需要": "Non requis", "与上次比较": "Comparaison précédente", "主控模型连通性测试中": "Test de connexion du modèle principal",
-        "主流程": "Parcours nominal", "以断言列表为准。": "Voir la liste des assertions.", "例如 tempbox、order-service、crm-api": "Par exemple : tempbox, order-service, crm-api",
+        "主流程": "Parcours nominal", "以断言列表为准。": "Voir la liste des assertions.", "例如 demo、order-service、crm-api": "Par exemple : demo, order-service, crm-api",
         "例如：补充 prefix 包含中文、特殊字符、重复前缀时的异常用例": "Exemple : ajouter des cas négatifs pour Unicode, caractères spéciaux et préfixes répétés",
         "依赖测试数据": "Données de test requises", "依赖环境": "Dépend de l’environnement", "依赖环境行为": "Dépend du comportement de l’environnement", "依赖链": "Chaîne de dépendances",
         "依赖项目方外部测试能力": "Capacité de test externe du projet requise", "保存时会重新执行接口引用、请求契约、断言语义和链路变量门禁；不符合交付标准的修改不会写入文件。": "L’enregistrement relance les contrôles des références API, contrats, assertions et variables de dépendance. Les modifications invalides ne sont pas écrites.",
@@ -1607,7 +1607,7 @@ _RU.update(
     {
         "smoke, 用户模块": "smoke, модуль-пользователей", "v1.0.3 · 项目：demo": "v1.0.3 · Проект: demo",
         "上次通过率": "Предыдущая успешность", "不需要": "Не требуется", "与上次比较": "Сравнение с прошлым запуском", "主控模型连通性测试中": "Проверка подключения основной модели",
-        "主流程": "Основной сценарий", "以断言列表为准。": "См. список проверок.", "例如 tempbox、order-service、crm-api": "Например: tempbox, order-service, crm-api",
+        "主流程": "Основной сценарий", "以断言列表为准。": "См. список проверок.", "例如 demo、order-service、crm-api": "Например: demo, order-service, crm-api",
         "例如：补充 prefix 包含中文、特殊字符、重复前缀时的异常用例": "Пример: добавить негативные сценарии для Unicode, специальных символов и повторных префиксов",
         "依赖测试数据": "Требуются тестовые данные", "依赖环境": "Зависит от среды", "依赖环境行为": "Зависит от поведения среды", "依赖链": "Цепочка зависимостей",
         "依赖项目方外部测试能力": "Требуется внешняя тестовая возможность проекта", "保存时会重新执行接口引用、请求契约、断言语义和链路变量门禁；不符合交付标准的修改不会写入文件。": "При сохранении повторно проверяются ссылки API, контракты, проверки и переменные зависимостей. Недопустимые изменения не записываются.",

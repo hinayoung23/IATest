@@ -72,7 +72,7 @@ def case_generation_strategy_context(root: Path, endpoints: list[Endpoint] | Non
             "按启用策略尽可能全面生成用例，不要只生成 happy_path。",
             "启用表示允许在适用接口上生成，并不表示每个接口都必须机械生成；以 strategy_applicability 的 Schema 判定为准。",
             "无法安全执行的破坏性、依赖外部状态或明显缺少前置数据的负向用例，runnable 应设为 false，并说明 risk。",
-            "存在接口依赖时优先使用 steps 生成链路用例，例如先生成邮箱再查询、续期或删除。",
+            "存在接口依赖时优先使用 steps 生成链路用例；前置接口、提取字段和后续动作必须来自当前项目契约。",
         ],
     }
 
@@ -2002,47 +2002,27 @@ def _rule_fill_coverage_gaps(cases: list[TestCase], endpoints: list[Endpoint]) -
 
 
 def _build_dependency_graph(endpoints: list[Endpoint]) -> dict[str, set[str]]:
-    """Detect data dependency chains by finding shared path parameters.
-
-    When multiple endpoints share the same path param (e.g. '{email}' appears in
-    /api/check/{email}, /api/messages/{email}, /api/delete/{email}), there is
-    likely a data dependency chain.
-    """
+    """Propose data links only when a documented response supplies the input."""
     import re as _re
+    from iatest.generator.cases import likely_produced_fields
 
-    # Pass 1: collect param groups and potential producers
     param_groups: dict[str, list[str]] = {}
-    paramless: list[tuple[str, str]] = []  # [(key, hint), ...]
-
     for ep in endpoints:
         key = f"{ep.method} {ep.path}"
         path_params = _re.findall(r'\{(\w+)\}', ep.path)
         if not path_params and ep.parameters:
             path_params = [p.get("name", "") for p in ep.parameters if p.get("in") == "path"]
+        for name in path_params:
+            if name:
+                param_groups.setdefault(name, []).append(key)
 
-        if path_params:
-            for pn in path_params:
-                param_groups.setdefault(pn.lower(), []).append(key)
-        else:
-            hint = ((ep.summary or "") + " " + ep.path.rsplit("/", 1)[-1]).lower()
-            paramless.append((key, hint))
-
-    # Pass 2: match producers to param groups
     graph: dict[str, set[str]] = {}
-    for pn_lower, consumer_keys in param_groups.items():
-        if len(consumer_keys) < 2:
-            continue
-        # Find best producer: paramless endpoint whose hint contains the param name
-        prod_key = ""
-        for key, hint in paramless:
-            if pn_lower in hint:
-                prod_key = key
-                break
-        if not prod_key and paramless:
-            prod_key = paramless[0][0]  # fallback: first paramless endpoint
-        if prod_key:
-            graph.setdefault(prod_key, set()).update(consumer_keys)
-
+    for producer in endpoints:
+        key = f"{producer.method} {producer.path}"
+        for name in likely_produced_fields(producer):
+            for consumer in param_groups.get(name, []):
+                if consumer != key:
+                    graph.setdefault(key, set()).add(consumer)
     return graph
 
 

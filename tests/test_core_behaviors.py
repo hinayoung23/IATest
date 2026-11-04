@@ -169,7 +169,7 @@ def test_unexpected_429_waits_and_retries_with_documented_policy() -> None:
         calls += 1
         if calls == 1:
             return httpx.Response(429, json={"detail": "too many requests"})
-        return httpx.Response(200, json={"email": "prepared@mail.tempbox.cn"})
+        return httpx.Response(200, json={"email": "prepared@mail.example.invalid"})
 
     limiter = RequestRateLimiter(
         [EndpointRateLimit("GET", "/api/generate", 10, 60)],
@@ -204,8 +204,8 @@ def test_cleanup_steps_run_after_case_and_use_response_context() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
         if request.url.path == "/api/generate":
-            return httpx.Response(200, json={"email": "demo@mail.tempbox.cn"})
-        if request.url.path == "/api/delete/demo@mail.tempbox.cn":
+            return httpx.Response(200, json={"email": "demo@mail.example.invalid"})
+        if request.url.path == "/api/delete/demo@mail.example.invalid":
             return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404, json={"detail": "not found"})
 
@@ -231,7 +231,7 @@ def test_cleanup_steps_run_after_case_and_use_response_context() -> None:
 
     assert result.status == "passed"
     assert result.cleanup["status"] == "passed"
-    assert calls == [("GET", "/api/generate"), ("DELETE", "/api/delete/demo@mail.tempbox.cn")]
+    assert calls == [("GET", "/api/generate"), ("DELETE", "/api/delete/demo@mail.example.invalid")]
 
 
 def test_static_fixture_provider_makes_contract_case_executable() -> None:
@@ -398,8 +398,8 @@ def test_mock_server_matches_request_templates_and_sequences() -> None:
 def test_chain_report_context_excludes_cleanup_response_fields() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/generate":
-            return httpx.Response(200, json={"email": "demo@mail.tempbox.cn"})
-        if request.url.path == "/api/delete/demo@mail.tempbox.cn":
+            return httpx.Response(200, json={"email": "demo@mail.example.invalid"})
+        if request.url.path == "/api/delete/demo@mail.example.invalid":
             return httpx.Response(200, json={"status": "ok", "message": "Mailbox deleted"})
         return httpx.Response(404, json={"detail": "not found"})
 
@@ -433,7 +433,7 @@ def test_chain_report_context_excludes_cleanup_response_fields() -> None:
 
     assert result.status == "passed"
     assert result.cleanup["status"] == "passed"
-    assert result.request["context"]["email"] == "demo@mail.tempbox.cn"
+    assert result.request["context"]["email"] == "demo@mail.example.invalid"
     assert "message" not in result.request["context"]
     assert "status" not in result.request["context"]
 
@@ -444,7 +444,7 @@ def test_cleanup_runs_even_when_main_assertion_fails() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
         if request.url.path == "/api/generate":
-            return httpx.Response(200, json={"email": "failed@mail.tempbox.cn"})
+            return httpx.Response(200, json={"email": "failed@mail.example.invalid"})
         return httpx.Response(200, json={"status": "ok"})
 
     client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
@@ -469,7 +469,7 @@ def test_cleanup_runs_even_when_main_assertion_fails() -> None:
 
     assert result.status == "failed"
     assert result.cleanup["status"] == "passed"
-    assert calls == [("GET", "/api/generate"), ("DELETE", "/api/delete/failed@mail.tempbox.cn")]
+    assert calls == [("GET", "/api/generate"), ("DELETE", "/api/delete/failed@mail.example.invalid")]
 
 
 def test_setup_steps_prepare_context_for_main_request_and_cleanup() -> None:
@@ -478,10 +478,10 @@ def test_setup_steps_prepare_context_for_main_request_and_cleanup() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
         if request.url.path == "/api/generate":
-            return httpx.Response(200, json={"email": "prepared@mail.tempbox.cn"})
-        if request.url.path == "/api/check/prepared@mail.tempbox.cn":
+            return httpx.Response(200, json={"email": "prepared@mail.example.invalid"})
+        if request.url.path == "/api/check/prepared@mail.example.invalid":
             return httpx.Response(200, json={"valid": True})
-        if request.url.path == "/api/delete/prepared@mail.tempbox.cn":
+        if request.url.path == "/api/delete/prepared@mail.example.invalid":
             return httpx.Response(200, json={"status": "ok"})
         return httpx.Response(404)
 
@@ -520,8 +520,8 @@ def test_setup_steps_prepare_context_for_main_request_and_cleanup() -> None:
     assert result.cleanup["status"] == "passed"
     assert calls == [
         ("GET", "/api/generate"),
-        ("GET", "/api/check/prepared@mail.tempbox.cn"),
-        ("DELETE", "/api/delete/prepared@mail.tempbox.cn"),
+        ("GET", "/api/check/prepared@mail.example.invalid"),
+        ("DELETE", "/api/delete/prepared@mail.example.invalid"),
     ]
 
 
@@ -723,9 +723,9 @@ def test_nonexistent_resource_case_uses_unique_absent_value_without_creation_set
         method="GET",
         path="/api/check/{email}",
         design_method="equivalence_class",
-        path_params={"email": "test123@mail.tempbox.cn"},
+        path_params={"email": "test123@mail.example.invalid"},
         assertions=[Assertion(type="status_code", expected=200)],
-        test_steps=["替换路径参数：{'email': 'test123@mail.tempbox.cn'}。"],
+        test_steps=["替换路径参数：{'email': 'test123@mail.example.invalid'}。"],
     )
 
     prepared = attach_setup_steps([case], endpoints)[0]
@@ -769,8 +769,8 @@ def test_full_run_records_non_runnable_cases_as_skipped(tmp_path) -> None:
         path_params={"id": "missing"},
         expected_result="接口应返回明确错误。",
     )
-    save_cases(tmp_path, [case], project="tempbox")
-    results = run_cases(tmp_path, project="tempbox")
+    save_cases(tmp_path, [case], project="sample_api")
+    results = run_cases(tmp_path, project="sample_api")
     assert len(results) == 1
     assert results[0].status == "skipped"
     assert "缺少可靠前置测试数据" in results[0].error
@@ -1087,15 +1087,15 @@ def test_report_name_and_inline_markdown() -> None:
 
 
 def test_page_exposes_project_creation_entry(tmp_path) -> None:
-    html = page(tmp_path, "tempbox", "接口信息", "<section></section>")
+    html = page(tmp_path, "sample_api", "接口信息", "<section></section>")
     assert 'class="site-nav"' in html
     assert "新建项目" in html
     assert "/actions/create-project" in html
 
 
 def test_completed_task_start_message_is_hidden() -> None:
-    assert display_message_for_tasks("tempbox", "用例生成任务已开始，可关闭提示并继续使用其它功能", ["generate"]) == ""
-    assert display_message_for_tasks("tempbox", "接口文档路径或 URL 不能为空", ["discover"]) == "接口文档路径或 URL 不能为空"
+    assert display_message_for_tasks("sample_api", "用例生成任务已开始，可关闭提示并继续使用其它功能", ["generate"]) == ""
+    assert display_message_for_tasks("sample_api", "接口文档路径或 URL 不能为空", ["discover"]) == "接口文档路径或 URL 不能为空"
 
 
 def test_trend_overview_includes_visual_indicator() -> None:
@@ -1522,7 +1522,7 @@ def test_coverage_gap_detection_chain_missing() -> None:
     from iatest.core.models import Assertion, Endpoint, TestCase
 
     eps = [
-        Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
+        Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}}),
         Endpoint(method="GET", path="/api/check/{email}", summary="检查邮箱"),
         Endpoint(method="GET", path="/api/messages/{email}", summary="消息列表"),
         Endpoint(method="DELETE", path="/api/delete/{email}", summary="删除邮箱"),
@@ -1577,7 +1577,7 @@ def test_gap_fill_full_flow_detect_generate_merge_verify(monkeypatch) -> None:
     from iatest.core.models import Endpoint, TestCase, TestStep
 
     eps = [
-        Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
+        Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}}),
         Endpoint(method="GET", path="/api/check/{email}", summary="检查邮箱"),
         Endpoint(method="DELETE", path="/api/delete/{email}", summary="删除邮箱"),
     ]
@@ -1626,7 +1626,7 @@ def test_empty_chain_does_not_count_as_covered() -> None:
     from iatest.core.models import Endpoint, TestCase
 
     eps = [
-        Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
+        Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}}),
         Endpoint(method="GET", path="/api/check/{email}", summary="检查"),
         Endpoint(method="DELETE", path="/api/delete/{email}", summary="删除"),
     ]
@@ -1731,7 +1731,7 @@ def test_generate_cases_with_config_rule_fills_critical_gaps(monkeypatch, tmp_pa
         return cases, ""
     monkeypatch.setattr(wf, "generate_cases_from_plan_batch", mock_batch)
 
-    cases, warning = wf.generate_cases_with_config(tmp_path, eps, project="tempbox")
+    cases, warning = wf.generate_cases_with_config(tmp_path, eps, project="sample_api")
 
     assert len(cases) >= 3, f"expected at least 3 cases, got {len(cases)}; {warning}"
     assert "plan:" in warning
@@ -1773,7 +1773,7 @@ def test_generate_cases_with_config_rule_fallback_when_batches_are_empty(monkeyp
     ], ""))
     monkeypatch.setattr(wf, "generate_cases_from_plan_batch", lambda **kwargs: ([], ""))
 
-    cases, warning = wf.generate_cases_with_config(tmp_path, eps, project="tempbox")
+    cases, warning = wf.generate_cases_with_config(tmp_path, eps, project="sample_api")
 
     # All batches empty → all_cases empty → no local rule fallback (AI-only)
     assert len(cases) == 0
@@ -1996,7 +1996,7 @@ def test_fill_hard_gaps_local_dep_graph_produces_chain() -> None:
     from iatest.core.models import Endpoint
 
     eps = [
-        Endpoint(method="GET", path="/api/generate", summary="生成邮箱"),
+        Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}}),
         Endpoint(method="GET", path="/api/check/{email}", summary="检查邮箱"),
         Endpoint(method="DELETE", path="/api/delete/{email}", summary="删除邮箱"),
     ]
@@ -2143,7 +2143,7 @@ def test_scenario_id_survives_save_and_reload(tmp_path) -> None:
 
 def test_context_page_labels_are_human_readable() -> None:
     html = render_lesson_cards(
-        "tempbox",
+        "sample_api",
         [
             {
                 "id": "les-1",
@@ -2174,9 +2174,9 @@ def test_dependency_lessons_show_specific_content_and_candidate_state(tmp_path) 
         responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}},
     )
     consumer = Endpoint(method="GET", path="/api/check/{email}", parameters=[{"name": "email", "in": "path"}])
-    infer_dependency_candidates(tmp_path, "tempbox", [producer, consumer])
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")
-    html = render_lesson_cards("tempbox", lessons)
+    infer_dependency_candidates(tmp_path, "sample_api", [producer, consumer])
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="data_dependency")
+    html = render_lesson_cards("sample_api", lessons)
     assert "Data source: response fields email from GET /api/generate" in lessons[0]["content"]
     assert "Usage: path parameter email on GET /api/check/{email}" in lessons[0]["content"]
     assert "候选依赖" in html
@@ -2193,14 +2193,14 @@ def test_dependency_lessons_are_grouped_for_display_and_prompt(tmp_path) -> None
     )
     check = Endpoint(method="GET", path="/api/check/{email}", parameters=[{"name": "email", "in": "path"}])
     delete = Endpoint(method="DELETE", path="/api/delete/{email}", parameters=[{"name": "email", "in": "path"}])
-    infer_dependency_candidates(tmp_path, "tempbox", [producer, check, delete])
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")
+    infer_dependency_candidates(tmp_path, "sample_api", [producer, check, delete])
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="data_dependency")
     for lesson in lessons:
-        update_lesson_review(tmp_path, "tempbox", lesson["id"], lifecycle_status="active", review_status="confirmed")
-        update_dependency_status(tmp_path, "tempbox", lesson["id"], "verified", "test_verified", "验收测试确认")
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")
+        update_lesson_review(tmp_path, "sample_api", lesson["id"], lifecycle_status="active", review_status="confirmed")
+        update_dependency_status(tmp_path, "sample_api", lesson["id"], "verified", "test_verified", "验收测试确认")
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="data_dependency")
 
-    html = render_lesson_cards("tempbox", lessons)
+    html = render_lesson_cards("sample_api", lessons)
     assert "依赖组" in html
     assert "查看 2 条具体依赖" in html
     assert "底层保留 2 条可独立验证的依赖记录" in html
@@ -2211,7 +2211,7 @@ def test_dependency_lessons_are_grouped_for_display_and_prompt(tmp_path) -> None
 
     bundle = build_context_bundle(
         tmp_path,
-        "tempbox",
+        "sample_api",
         task_type="case_generation",
         model_config={"model": "demo", "context_window": 32000, "default_output_tokens": 2000},
         context_config={"injection": {"budgets": {"case_generation": {"max_context_ratio": 0.25, "max_context_tokens": 4000, "reserve_output_tokens": 2000}}}},
@@ -2329,7 +2329,7 @@ def test_run_cases_uses_background_task_panel() -> None:
 
 def test_cases_page_exposes_supplement_case_action() -> None:
     template = (Path(__file__).resolve().parents[1] / "iatest/web/templates/api_cases.html").read_text(encoding="utf-8")
-    html = render_supplement_form("tempbox", [Endpoint(method="GET", path="/api/generate", summary="生成邮箱")])
+    html = render_supplement_form("sample_api", [Endpoint(method="GET", path="/api/generate", summary="生成邮箱")])
     assert "{{SUPPLEMENT_FORM}}" in template
     assert 'action="/actions/supplement-cases"' in html
     assert "补充用例" in html
@@ -2337,12 +2337,12 @@ def test_cases_page_exposes_supplement_case_action() -> None:
 
 
 def test_detail_modals_expose_case_edit_and_delete_actions() -> None:
-    endpoint_html = render_endpoint_modals(Endpoint(method="GET", path="/api/generate", summary="生成邮箱"), 0, "tempbox")
+    endpoint_html = render_endpoint_modals(Endpoint(method="GET", path="/api/generate", summary="生成邮箱", responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}}), 0, "sample_api")
     endpoint_detail = endpoint_html.split('<dialog id="endpoint-detail-0"', 1)[1].split("</dialog>", 1)[0]
     case_html = render_case_detail_modal(
         ApiTestCase(id="TC-API-0001", title="生成邮箱", method="GET", path="/api/generate"),
         "case-detail-0",
-        project="tempbox",
+        project="sample_api",
     )
     case_detail = case_html.split('<dialog id="case-detail-0"', 1)[1].split("</dialog>", 1)[0]
     assert endpoint_detail.count(">关闭</button>") == 1
@@ -2366,7 +2366,7 @@ def test_case_detail_describes_fixture_requirement_as_project_capability() -> No
             fixture_requirements=["mail_injection"],
         ),
         "case-detail-0",
-        project="tempbox",
+        project="sample_api",
     )
     case_detail = case_html.split('<dialog id="case-detail-0"', 1)[1].split("</dialog>", 1)[0]
 
@@ -2386,7 +2386,7 @@ def test_case_detail_describes_fixture_requirement_as_project_capability() -> No
             fixture_requirements=["mail_injection"],
         ),
         "case-detail-configured",
-        project="tempbox",
+        project="sample_api",
         config={
             "fixtures": {
                 "providers": {
@@ -2581,14 +2581,14 @@ def test_context_storage_deduplicates_and_exports(tmp_path) -> None:
         "review_status": "confirmed",
         "confidence": "high",
     }
-    first = upsert_lesson(tmp_path, "tempbox", lesson)
-    second = upsert_lesson(tmp_path, "tempbox", {**lesson, "source": "report-2.md"})
-    stats = context_stats(tmp_path, "tempbox")
+    first = upsert_lesson(tmp_path, "sample_api", lesson)
+    second = upsert_lesson(tmp_path, "sample_api", {**lesson, "source": "report-2.md"})
+    stats = context_stats(tmp_path, "sample_api")
     assert first.action == "created"
     assert second.action == "duplicate_merged"
     assert stats["total_lessons"] == 1
-    assert validate_context(tmp_path, "tempbox")["ok"] is True
-    exported = export_lessons(tmp_path, "tempbox")
+    assert validate_context(tmp_path, "sample_api")["ok"] is True
+    exported = export_lessons(tmp_path, "sample_api")
     imported = import_lessons(tmp_path, "another", exported)
     assert imported["created"] == 1
     assert context_stats(tmp_path, "another")["total_lessons"] == 1
@@ -2608,22 +2608,22 @@ def test_context_conflict_and_pack(tmp_path) -> None:
         "review_status": "confirmed",
         "confidence": "high",
     }
-    upsert_lesson(tmp_path, "tempbox", base)
+    upsert_lesson(tmp_path, "sample_api", base)
     conflict = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {**base, "title": "无效邮箱返回 404", "content": "无效邮箱返回 HTTP 404，响应体提示不存在。", "source": "report-2.md"},
     )
     assert conflict.action == "conflict_created"
-    pairs = conflict_pairs(tmp_path, "tempbox")
+    pairs = conflict_pairs(tmp_path, "sample_api")
     assert len(pairs) == 1
-    assert resolve_conflict(tmp_path, "tempbox", relation_id=pairs[0]["relation_id"], resolution="keep_a", actor="test")
-    assert not conflict_pairs(tmp_path, "tempbox")
+    assert resolve_conflict(tmp_path, "sample_api", relation_id=pairs[0]["relation_id"], resolution="keep_a", actor="test")
+    assert not conflict_pairs(tmp_path, "sample_api")
     pack_id = save_context_pack(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
-            "task_id": "case-generation-tempbox",
+            "task_id": "case-generation-sample_api",
             "task_type": "case_generation",
             "model": "demo",
             "context_budget": 100,
@@ -2654,23 +2654,23 @@ def test_ai_conflict_review_can_dismiss_rule_candidate(tmp_path) -> None:
         "review_status": "confirmed",
         "confidence": "high",
     }
-    upsert_lesson(tmp_path, "tempbox", base)
+    upsert_lesson(tmp_path, "sample_api", base)
     upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {**base, "title": "无效邮箱返回 404", "content": "无效邮箱返回 HTTP 404，响应体提示不存在。", "source": "report-2.md"},
     )
-    pairs = conflict_pairs(tmp_path, "tempbox")
+    pairs = conflict_pairs(tmp_path, "sample_api")
     assert len(pairs) == 1
 
     summary = apply_conflict_review(
         tmp_path,
-        "tempbox",
+        "sample_api",
         [{"relation_id": pairs[0]["relation_id"], "decision": "not_conflict", "reason": "标题不同但业务结论一致"}],
     )
 
     assert summary["not_conflict"] == 1
-    assert conflict_pairs(tmp_path, "tempbox") == []
+    assert conflict_pairs(tmp_path, "sample_api") == []
 
 
 def test_parse_conflict_review_response_normalizes_invalid_decision() -> None:
@@ -2686,7 +2686,7 @@ def test_parse_conflict_review_response_normalizes_invalid_decision() -> None:
 
 def test_render_conflict_groups_groups_pairs_by_endpoint() -> None:
     html = render_conflict_groups(
-        "tempbox",
+        "sample_api",
         [
             {
                 "relation_id": 1,
@@ -2739,8 +2739,8 @@ def test_case_generation_lesson_contains_concrete_assertions(tmp_path) -> None:
     )
     from iatest.context.storage import record_case_generation_lessons
 
-    record_case_generation_lessons(tmp_path, "tempbox", [case])
-    lesson = list_lessons(tmp_path, "tempbox", lesson_type="assertion_pattern")[0]
+    record_case_generation_lessons(tmp_path, "sample_api", [case])
+    lesson = list_lessons(tmp_path, "sample_api", lesson_type="assertion_pattern")[0]
     assert "status_code status_code eq 200" in lesson["content"]
     assert "json_path $.data.token not_empty true" in lesson["content"]
     assert "body=" in lesson["content"]
@@ -2761,10 +2761,10 @@ def test_similar_lessons_can_be_merged(tmp_path) -> None:
         "review_status": "confirmed",
         "confidence": "high",
     }
-    first = upsert_lesson(tmp_path, "tempbox", base)
+    first = upsert_lesson(tmp_path, "sample_api", base)
     second = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             **base,
             "title": "无效邮箱仍返回 200",
@@ -2774,10 +2774,10 @@ def test_similar_lessons_can_be_merged(tmp_path) -> None:
             "review_status": "unreviewed",
         },
     )
-    pairs = similar_pairs(tmp_path, "tempbox")
+    pairs = similar_pairs(tmp_path, "sample_api")
     assert pairs
-    assert resolve_similar(tmp_path, "tempbox", relation_id=pairs[0]["relation_id"], resolution="merge_b", actor="test")
-    lessons = lessons_by_ids(tmp_path, "tempbox", [first.lesson_id, second.lesson_id])
+    assert resolve_similar(tmp_path, "sample_api", relation_id=pairs[0]["relation_id"], resolution="merge_b", actor="test")
+    lessons = lessons_by_ids(tmp_path, "sample_api", [first.lesson_id, second.lesson_id])
     assert lessons[second.lesson_id]["lifecycle_status"] == "merged"
     assert lessons[first.lesson_id]["occurrence_count"] >= 2
 
@@ -2785,7 +2785,7 @@ def test_similar_lessons_can_be_merged(tmp_path) -> None:
 def test_known_issue_moves_to_resolved_candidate_after_quiet_runs(tmp_path) -> None:
     upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -2810,12 +2810,12 @@ def test_known_issue_moves_to_resolved_candidate_after_quiet_runs(tmp_path) -> N
         elapsed_ms=10,
     )
     for _ in range(5):
-        update_known_issue_lifecycle(tmp_path, "tempbox", [result])
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="known_issue")
+        update_known_issue_lifecycle(tmp_path, "sample_api", [result])
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="known_issue")
     assert lessons[0]["lifecycle_status"] == "resolved_candidate"
     assert lessons[0]["review_status"] == "needs_review"
-    assert resolve_known_issue(tmp_path, "tempbox", lessons[0]["id"], actor="test")
-    resolved = list_lessons(tmp_path, "tempbox", lesson_type="known_issue")
+    assert resolve_known_issue(tmp_path, "sample_api", lessons[0]["id"], actor="test")
+    resolved = list_lessons(tmp_path, "sample_api", lesson_type="known_issue")
     assert resolved[0]["lifecycle_status"] == "resolved"
     assert resolved[0]["review_status"] == "confirmed"
 
@@ -2823,7 +2823,7 @@ def test_known_issue_moves_to_resolved_candidate_after_quiet_runs(tmp_path) -> N
 def test_context_pack_lookup_and_lesson_titles(tmp_path) -> None:
     result = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -2839,9 +2839,9 @@ def test_context_pack_lookup_and_lesson_titles(tmp_path) -> None:
     )
     pack_id = save_context_pack(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
-            "task_id": "case-generation-tempbox",
+            "task_id": "case-generation-sample_api",
             "task_type": "case_generation",
             "model": "demo",
             "context_budget": 100,
@@ -2850,16 +2850,16 @@ def test_context_pack_lookup_and_lesson_titles(tmp_path) -> None:
             "excluded_lesson_ids": [{"id": "missing", "reason": "over_budget"}],
         },
     )
-    pack = latest_context_pack(tmp_path, "tempbox", "case_generation")
+    pack = latest_context_pack(tmp_path, "sample_api", "case_generation")
     assert pack and pack["id"] == pack_id
-    lessons = lessons_by_ids(tmp_path, "tempbox", pack["included_lesson_ids"])
+    lessons = lessons_by_ids(tmp_path, "sample_api", pack["included_lesson_ids"])
     assert lessons[result.lesson_id]["title"] == "prefix 可选"
 
 
 def test_case_context_panel_hides_internal_ids_and_filters_unrelated_lessons(tmp_path) -> None:
     relevant = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -2875,7 +2875,7 @@ def test_case_context_panel_hides_internal_ids_and_filters_unrelated_lessons(tmp
     )
     unrelated = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "DELETE",
@@ -2891,9 +2891,9 @@ def test_case_context_panel_hides_internal_ids_and_filters_unrelated_lessons(tmp
     )
     save_context_pack(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
-            "task_id": "case-generation-tempbox",
+            "task_id": "case-generation-sample_api",
             "task_type": "case_generation",
             "model": "demo-model",
             "context_budget": 1000,
@@ -2905,8 +2905,8 @@ def test_case_context_panel_hides_internal_ids_and_filters_unrelated_lessons(tmp
     case = ApiTestCase(id="TC-API-0001", title="生成邮箱", method="GET", path="/api/generate")
     panel = render_context_pack_panel(
         tmp_path,
-        "tempbox",
-        latest_context_pack(tmp_path, "tempbox", "case_generation"),
+        "sample_api",
+        latest_context_pack(tmp_path, "sample_api", "case_generation"),
         case=case,
     )
 
@@ -3049,7 +3049,7 @@ def test_context_injection_filters_pending(tmp_path) -> None:
     endpoint = Endpoint(method="GET", path="/api/check/{email}")
     upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -3065,7 +3065,7 @@ def test_context_injection_filters_pending(tmp_path) -> None:
     )
     upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -3083,7 +3083,7 @@ def test_context_injection_filters_pending(tmp_path) -> None:
     )
     bundle = build_context_bundle(
         tmp_path,
-        "tempbox",
+        "sample_api",
         task_type="case_generation",
         model_config={"model": "demo", "context_window": 32000, "default_output_tokens": 2000},
         context_config={"injection": {"budgets": {"case_generation": {"max_context_ratio": 0.25, "max_context_tokens": 4000, "reserve_output_tokens": 2000}}}},
@@ -3121,8 +3121,8 @@ def test_report_analysis_extraction_strips_blocks_and_saves_lessons(tmp_path) ->
 []
 ```
 """
-    visible, summary = process_report_analysis(tmp_path, "tempbox", analysis, source="report-1.md")
-    stats = context_stats(tmp_path, "tempbox")
+    visible, summary = process_report_analysis(tmp_path, "sample_api", analysis, source="report-1.md")
+    stats = context_stats(tmp_path, "sample_api")
     assert "iatest-lessons-json" not in visible
     assert summary["lessons_created"] == 1
     assert stats["total_lessons"] == 1
@@ -3147,10 +3147,10 @@ def test_report_analysis_ignores_generic_generation_meta_lessons(tmp_path) -> No
 []
 ```
 """
-    _, summary = process_report_analysis(tmp_path, "tempbox", analysis, source="report-meta.md")
+    _, summary = process_report_analysis(tmp_path, "sample_api", analysis, source="report-meta.md")
 
     assert summary["lessons_created"] == 0
-    assert context_stats(tmp_path, "tempbox")["total_lessons"] == 0
+    assert context_stats(tmp_path, "sample_api")["total_lessons"] == 0
 
 
 def test_report_analysis_keeps_concrete_assertion_pattern_lessons(tmp_path) -> None:
@@ -3174,8 +3174,8 @@ def test_report_analysis_keeps_concrete_assertion_pattern_lessons(tmp_path) -> N
 []
 ```
 """
-    _, summary = process_report_analysis(tmp_path, "tempbox", analysis, source="report-assertion.md")
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="assertion_pattern")
+    _, summary = process_report_analysis(tmp_path, "sample_api", analysis, source="report-assertion.md")
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="assertion_pattern")
 
     assert summary["lessons_created"] == 1
     assert len(lessons) == 1
@@ -3185,7 +3185,7 @@ def test_report_analysis_keeps_concrete_assertion_pattern_lessons(tmp_path) -> N
 def test_report_analysis_applies_known_issue_updates(tmp_path) -> None:
     created = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -3210,8 +3210,8 @@ def test_report_analysis_applies_known_issue_updates(tmp_path) -> None:
 ]
 ```
 """
-    _, summary = process_report_analysis(tmp_path, "tempbox", analysis, source="report-2.md")
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="known_issue")
+    _, summary = process_report_analysis(tmp_path, "sample_api", analysis, source="report-2.md")
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="known_issue")
     assert summary["known_issue_updates"] == 1
     assert lessons[0]["lifecycle_status"] == "resolved_candidate"
     assert lessons[0]["review_status"] == "needs_review"
@@ -3220,7 +3220,7 @@ def test_report_analysis_applies_known_issue_updates(tmp_path) -> None:
 def test_failure_patterns_and_endpoint_change_review(tmp_path) -> None:
     lesson = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -3244,16 +3244,16 @@ def test_failure_patterns_and_endpoint_change_review(tmp_path) -> None:
         elapsed_ms=12,
         assertion_errors=["$.valid expected true"],
     )
-    assert update_failure_patterns(tmp_path, "tempbox", [result])["created"] == 1
-    assert mark_lessons_for_endpoint_changes(tmp_path, "tempbox", ["GET /api/check/{email}"]) == 1
-    lessons = lessons_by_ids(tmp_path, "tempbox", [lesson.lesson_id])
+    assert update_failure_patterns(tmp_path, "sample_api", [result])["created"] == 1
+    assert mark_lessons_for_endpoint_changes(tmp_path, "sample_api", ["GET /api/check/{email}"]) == 1
+    lessons = lessons_by_ids(tmp_path, "sample_api", [lesson.lesson_id])
     assert lessons[lesson.lesson_id]["review_status"] == "needs_review"
 
 
 def test_dependency_candidates_and_project_memory(tmp_path) -> None:
     upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "project",
             "lesson_type": "business_rule",
@@ -3272,9 +3272,9 @@ def test_dependency_candidates_and_project_memory(tmp_path) -> None:
         responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}},
     )
     consumer = Endpoint(method="GET", path="/api/check/{email}", parameters=[{"name": "email", "in": "path"}])
-    summary = infer_dependency_candidates(tmp_path, "tempbox", [producer, consumer])
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")
-    memory_path = rebuild_project_memory(tmp_path, "tempbox")
+    summary = infer_dependency_candidates(tmp_path, "sample_api", [producer, consumer])
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="data_dependency")
+    memory_path = rebuild_project_memory(tmp_path, "sample_api")
     memory = json.loads(memory_path.read_text(encoding="utf-8"))
     assert summary["created"] == 1
     assert lessons[0]["verification_status"] == "candidate"
@@ -3288,9 +3288,9 @@ def test_dependency_verification_marks_candidate_verified(tmp_path) -> None:
         responses={"200": {"schema": {"type": "object", "properties": {"email": {"type": "string"}}}}},
     )
     consumer = Endpoint(method="GET", path="/api/check/{email}", parameters=[{"name": "email", "in": "path"}])
-    infer_dependency_candidates(tmp_path, "tempbox", [producer, consumer])
-    lesson = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")[0]
-    assert update_lesson_review(tmp_path, "tempbox", lesson["id"], lifecycle_status="active", review_status="confirmed")
+    infer_dependency_candidates(tmp_path, "sample_api", [producer, consumer])
+    lesson = list_lessons(tmp_path, "sample_api", lesson_type="data_dependency")[0]
+    assert update_lesson_review(tmp_path, "sample_api", lesson["id"], lifecycle_status="active", review_status="confirmed")
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/generate":
@@ -3302,12 +3302,12 @@ def test_dependency_verification_marks_candidate_verified(tmp_path) -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     summary = verify_dependency_candidates(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {"base_url": "http://testserver", "headers": {}},
         {"context": {"dependency_verification": {"allow_methods": ["GET"], "deny_methods": ["DELETE"], "requires_confirmation": True}}},
         client,
     )
-    verified = list_lessons(tmp_path, "tempbox", lesson_type="data_dependency")[0]
+    verified = list_lessons(tmp_path, "sample_api", lesson_type="data_dependency")[0]
     assert summary["verified"] == 1
     assert verified["verification_status"] == "verified"
 
@@ -3328,17 +3328,17 @@ def test_extraction_retry_reprocesses_saved_payload(tmp_path) -> None:
 """
     job_id = create_extraction_job(
         tmp_path,
-        "tempbox",
+        "sample_api",
         trigger="report_analysis",
         source="report-retry.md",
         status="failed",
         error="previous parse error",
         payload={"analysis": analysis},
     )
-    with context_connection(tmp_path, "tempbox") as conn:
+    with context_connection(tmp_path, "sample_api") as conn:
         conn.execute("update extraction_jobs set next_retry_at = null where id = ?", (job_id,))
-    summary = retry_due_report_extractions(tmp_path, "tempbox")
-    lessons = list_lessons(tmp_path, "tempbox", lesson_type="business_rule")
+    summary = retry_due_report_extractions(tmp_path, "sample_api")
+    lessons = list_lessons(tmp_path, "sample_api", lesson_type="business_rule")
     assert summary["completed"] == 1
     assert lessons[0]["title"] == "统一错误结构"
 
@@ -3351,8 +3351,8 @@ def test_invalid_report_analysis_is_not_retryable(tmp_path) -> None:
 ]
 ```
 """
-    _, summary = process_report_analysis(tmp_path, "tempbox", analysis, source="bad-report.md")
-    with context_connection(tmp_path, "tempbox") as conn:
+    _, summary = process_report_analysis(tmp_path, "sample_api", analysis, source="bad-report.md")
+    with context_connection(tmp_path, "sample_api") as conn:
         rows = conn.execute("select status, max_retries, next_retry_at from extraction_jobs").fetchall()
     assert summary["error"]
     assert len(rows) == 1
@@ -3371,17 +3371,17 @@ def test_extraction_retry_does_not_spawn_new_failed_jobs(tmp_path) -> None:
 """
     job_id = create_extraction_job(
         tmp_path,
-        "tempbox",
+        "sample_api",
         trigger="report_analysis",
         source="bad-retry.md",
         status="failed",
         error="previous parse error",
         payload={"analysis": bad_analysis},
     )
-    with context_connection(tmp_path, "tempbox") as conn:
+    with context_connection(tmp_path, "sample_api") as conn:
         conn.execute("update extraction_jobs set next_retry_at = null where id = ?", (job_id,))
-    summary = retry_due_report_extractions(tmp_path, "tempbox")
-    with context_connection(tmp_path, "tempbox") as conn:
+    summary = retry_due_report_extractions(tmp_path, "sample_api")
+    with context_connection(tmp_path, "sample_api") as conn:
         rows = conn.execute("select id, status, retry_count from extraction_jobs").fetchall()
     assert summary["failed"] == 1
     assert len(rows) == 1
@@ -3392,7 +3392,7 @@ def test_extraction_retry_does_not_spawn_new_failed_jobs(tmp_path) -> None:
 def test_suspect_tracking_marks_low_quality_context_for_review(tmp_path) -> None:
     lesson = upsert_lesson(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
             "scope": "endpoint",
             "method": "GET",
@@ -3409,9 +3409,9 @@ def test_suspect_tracking_marks_low_quality_context_for_review(tmp_path) -> None
     )
     save_context_pack(
         tmp_path,
-        "tempbox",
+        "sample_api",
         {
-            "task_id": "case-generation-tempbox",
+            "task_id": "case-generation-sample_api",
             "task_type": "case_generation",
             "model": "demo",
             "context_budget": 100,
@@ -3421,7 +3421,7 @@ def test_suspect_tracking_marks_low_quality_context_for_review(tmp_path) -> None
     )
     result = CaseResult("TC1", "check", "failed", "GET", "/api/check/{email}", 200, 10, assertion_errors=["bad assertion"])
     for _ in range(3):
-        mark_suspect_lessons_after_run(tmp_path, "tempbox", [result])
-    updated = lessons_by_ids(tmp_path, "tempbox", [lesson.lesson_id])[lesson.lesson_id]
+        mark_suspect_lessons_after_run(tmp_path, "sample_api", [result])
+    updated = lessons_by_ids(tmp_path, "sample_api", [lesson.lesson_id])[lesson.lesson_id]
     assert updated["review_status"] == "needs_review"
     assert updated["metadata"]["suspect_count"] == 3

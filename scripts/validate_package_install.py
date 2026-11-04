@@ -43,6 +43,11 @@ def main():
         "iatest.exe" if os.name == "nt" else "iatest"
     )
     checks = {}
+    for source in package.parent.rglob("*"):
+        if source.is_file() and source.suffix in {".py", ".md", ".yaml", ".json", ".html", ".js", ".css", ".java", ".swift", ".m", ".h", ".ps1", ".xml", ".pbxproj", ".xcscheme"}:
+            if "tempbox" in source.name.lower() or "tempbox" in source.read_text(encoding="utf-8").lower():
+                raise RuntimeError("Installed runtime contains a local debug-project binding: " + str(source))
+    checks["no_debug_project_bindings"] = True
     with tempfile.TemporaryDirectory(prefix="iatest-installed-smoke-") as temporary:
         root = Path(temporary)
         run_cli([str(command), "--help"], root)

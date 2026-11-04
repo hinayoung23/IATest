@@ -4564,7 +4564,7 @@ def render_project_dialog(project: str) -> str:
         </div>
         {hidden_project(project)}
         <label>项目名称</label>
-        <input name="name" placeholder="例如 tempbox、order-service、crm-api" required>
+        <input name="name" placeholder="例如 demo、order-service、crm-api" required>
         <small>创建后会在 projects 目录下生成独立的接口、用例、报告和上下文数据。</small>
         <div class="modal-actions">
           <button type="button" class="ghost" onclick="cancelDialog('project-create-dialog')">取消</button>

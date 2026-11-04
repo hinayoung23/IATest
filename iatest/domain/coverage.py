@@ -669,8 +669,6 @@ def _business_rule_plan_item(
     if not request_overrides and not omit_fields and not chain_steps:
         request_overrides, omit_fields = inferred_rule_request(endpoint, rule)
     fixtures = unique_strings(rule.get("fixture_requirements") or [])
-    if not chain_steps and not fixtures:
-        chain_steps = deterministic_lifecycle_chain(endpoint, rule, endpoints)
     runnable = bool(rule.get("runnable", True)) and not fixtures
     expected_basis = str(expected.get("basis") or "")
     if (
@@ -738,11 +736,6 @@ def _business_rule_plan_item(
         "chain_steps": chain_steps,
         "origin": origin,
     }
-
-
-def deterministic_lifecycle_chain(endpoint: Endpoint, rule: dict[str, Any], endpoints: list[Endpoint]) -> list[dict[str, Any]]:
-    from iatest.adapters.tempbox import deterministic_lifecycle_chain as infer_chain
-    return infer_chain(endpoint, rule, endpoints)
 
 
 def inferred_rule_request(

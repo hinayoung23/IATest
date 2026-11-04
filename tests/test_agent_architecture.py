@@ -611,7 +611,7 @@ def test_negative_case_normalization_adds_negative_tag() -> None:
 def test_same_request_merge_prefers_scenario_title_over_purpose_description() -> None:
     purpose = ApiTestCase(
         id="TC-GEN-0001",
-        title="生成临时邮箱 - 用于创建一个新的临时邮箱，邮箱域名固定为 mail.tempbox.cn。",
+        title="生成临时邮箱 - 用于创建一个新的临时邮箱，邮箱域名固定为 mail.example.invalid。",
         method="GET",
         path="/generate",
         assertions=[Assertion(type="status_code", expected=200)],
@@ -929,7 +929,7 @@ def test_schema_boundary_coverage_includes_valid_maximum_and_overflow() -> None:
         business_rules=[
             {
                 "rule_id": "fixed-domain",
-                "title": "邮箱域名固定为 mail.tempbox.cn",
+                "title": "邮箱域名固定为 mail.example.invalid",
                 "testable": True,
                 "expected": {
                     "status": 200,
@@ -978,7 +978,7 @@ def test_schema_boundary_coverage_includes_valid_maximum_and_overflow() -> None:
         "type": "json_path",
         "target": "$.email",
         "operator": "eq",
-        "expected": f"{'a' * 50}@mail.tempbox.cn",
+        "expected": f"{'a' * 50}@mail.example.invalid",
     } in draft["assertions"]
     compiled = compile_scenario_drafts([draft], [endpoint], expected_scenario_ids=[draft["scenario_id"]])
     assert compiled.accepted
@@ -988,7 +988,7 @@ def test_schema_boundary_coverage_includes_valid_maximum_and_overflow() -> None:
         if item.target == "$.email"
     ]
     assert [(item.operator, item.expected) for item in email_assertions] == [
-        ("eq", f"{'a' * 50}@mail.tempbox.cn")
+        ("eq", f"{'a' * 50}@mail.example.invalid")
     ]
 
 
@@ -1090,7 +1090,7 @@ def test_url_encoding_instruction_remains_parameter_metadata_not_business_rule()
                 },
                 {
                     "rule_id": "config-note",
-                    "title": "当前默认保留窗口是 1440 分钟（24 小时），由 TEMP_RENEW_MINUTES 控制",
+                    "title": "当前默认保留窗口是 1440 分钟（24 小时），由 SAMPLE_RENEW_MINUTES 控制",
                     "testable": True,
                     "expected": {"status": 200, "assertions": []},
                 },
@@ -2216,7 +2216,7 @@ def test_chain_chinese_response_field_claims_require_matching_assertions() -> No
     assert any("expires_in" in message for message in issue_fields)
 
 
-def test_optional_query_and_response_assertions_match_real_tempbox_draft_semantics() -> None:
+def test_optional_query_and_response_assertions_match_real_sample_api_draft_semantics() -> None:
     endpoint = Endpoint(
         method="GET",
         path="/api/generate",
@@ -2262,7 +2262,7 @@ def test_optional_query_and_response_assertions_match_real_tempbox_draft_semanti
                     {
                         "type": "response_body",
                         "field": "email",
-                        "pattern": r"^[a-zA-Z0-9_\-]{8}@mail\.tempbox\.cn$",
+                        "pattern": r"^[a-zA-Z0-9_\-]{8}@mail\.example\.invalid$",
                     },
                     {"type": "response_body", "field": "created_at", "type_check": "integer"},
                 ],
@@ -2281,7 +2281,7 @@ def test_optional_query_and_response_assertions_match_real_tempbox_draft_semanti
     assert by_target[("json_path", "$.expires_in")].expected == 600
     response = {
         "status_code": 200,
-        "json": {"email": "abcdefgh@mail.tempbox.cn", "created_at": 1784204885, "expires_in": 600},
+        "json": {"email": "abcdefgh@mail.example.invalid", "created_at": 1784204885, "expires_in": 600},
         "text": "",
         "headers": {},
     }
@@ -2406,7 +2406,7 @@ def test_generic_dependency_chain_title_is_replaced_with_step_scenario() -> None
     )
 
     assert not [item for item in issues if item.severity == "error"]
-    assert plan[0]["title_hint"] == "生成邮箱、查询邮件、检查邮箱状态后续期邮箱"
+    assert plan[0]["title_hint"] == "生成临时邮箱、查询邮箱邮件、检查邮箱状态后续期邮箱"
 
     compiled = compile_scenario_drafts(
         [
@@ -2422,7 +2422,7 @@ def test_generic_dependency_chain_title_is_replaced_with_step_scenario() -> None
         endpoints,
         expected_scenario_ids=["SCN-CHAIN-TITLE"],
     )
-    assert compiled.cases[0].title == "生成邮箱、查询邮件、检查邮箱状态后续期邮箱"
+    assert compiled.cases[0].title == "生成临时邮箱、查询邮箱邮件、检查邮箱状态后续期邮箱"
 
 
 def test_vague_chain_title_is_rebuilt_from_actions_and_final_status() -> None:
@@ -2467,7 +2467,7 @@ def test_vague_chain_title_is_rebuilt_from_actions_and_final_status() -> None:
     )
 
     assert compiled.accepted
-    assert compiled.cases[0].title == "生成并删除邮箱后续期邮箱返回404"
+    assert compiled.cases[0].title == "生成邮箱、删除邮箱后续期邮箱返回404"
 
     refresh = compile_scenario_drafts(
         [
@@ -2511,7 +2511,7 @@ def test_vague_chain_title_is_rebuilt_from_actions_and_final_status() -> None:
     )
 
     assert refresh.accepted
-    assert refresh.cases[0].title == "生成邮箱后再次生成邮箱并刷新有效期"
+    assert refresh.cases[0].title == "生成邮箱后再次生成邮箱"
 
 
 def test_string_transport_type_error_plan_is_skipped_instead_of_generating_false_case() -> None:
@@ -2676,7 +2676,7 @@ GET /api/generate?prefix={prefix}
 | `prefix` | string | 否 | 最长 50 个字符，只能包含字母、数字、下划线和中划线。 |
 ### 成功响应
 ```json
-{"email":"abc@mail.tempbox.cn","created_at":123,"expires_in":600}
+{"email":"abc@mail.example.invalid","created_at":123,"expires_in":600}
 ```
 ### 错误响应
 以下情况会返回 `422`：
@@ -2775,7 +2775,7 @@ def test_contract_replaces_invalid_null_assertions_and_keeps_parser_runnable_pol
                             },
                         },
                         "example": {
-                            "email": "abc12345@mail.tempbox.cn",
+                            "email": "abc12345@mail.example.invalid",
                             "created_at": 1710000000,
                             "expires_in": 600,
                         },
@@ -2905,7 +2905,7 @@ def test_contract_required_response_fields_and_rule_strategy_are_deterministic()
     assert overlength["expected"]["assertions"][0]["expected"] == 422
 
 
-def test_deleted_resource_rule_builds_real_generate_delete_consume_chain() -> None:
+def test_deleted_resource_rule_waits_for_declared_state_transition() -> None:
     generate = Endpoint(
         method="GET",
         path="/api/generate",
@@ -2936,17 +2936,12 @@ def test_deleted_resource_rule_builds_real_generate_delete_consume_chain() -> No
 
     plan = fill_deterministic_coverage_gaps([], [generate, delete, extend])
     item = next(entry for entry in plan if entry.get("rule_ids") == ["BR-DELETED"])
-    assert item["endpoint_method"] == "CHAIN"
-    assert [(step["method"], step["path"]) for step in item["chain_steps"]] == [
-        ("GET", "/api/generate"),
-        ("DELETE", "/api/delete/{email}"),
-        ("POST", "/api/extend/{email}"),
-    ]
-    assert item["chain_steps"][0]["extract"] == {"email": "$.email"}
-    assert item["runnable"] is True
+    assert item["endpoint_method"] == "POST"
+    assert item["chain_steps"] == []
+    assert item["origin"] == "contract"  # The semantic designer must provide the steps.
 
 
-def test_delete_postcondition_builds_query_and_renew_verification_chain() -> None:
+def test_delete_postcondition_preserves_explicit_verification_chain() -> None:
     endpoints = [
         Endpoint(method="GET", path="/api/generate", responses={"200": {}}),
         Endpoint(
@@ -2974,6 +2969,16 @@ def test_delete_postcondition_builds_query_and_renew_verification_chain() -> Non
                         "description": "删除成功后不能再查询邮件、接收邮件或续期",
                         "source_evidence": "删除成功后不能再查询邮件、接收邮件或续期。",
                         "expected_status": 200,
+                        "trigger": {
+                            "chain_steps": [
+                                {"method": "GET", "path": "/api/generate", "extract": {"email": "$.email"}},
+                                {"method": "DELETE", "path": "/api/delete/{email}", "path_params": {"email": "{{email}}"}},
+                                {"method": "GET", "path": "/api/messages/{email}", "path_params": {"email": "{{email}}"},
+                                 "assertions": [{"type": "json_path", "target": "$", "operator": "length_eq", "expected": 0}]},
+                                {"method": "POST", "path": "/api/extend/{email}", "path_params": {"email": "{{email}}"},
+                                 "assertions": [{"type": "status_code", "operator": "eq", "expected": 404}]},
+                            ]
+                        },
                     }
                 ],
             )
@@ -3067,14 +3072,14 @@ def test_coverage_manifest_accepts_stronger_assertion_for_schema_type_obligation
                 {
                     "rule_id": "BR-EMAIL",
                     "title": "返回固定域名邮箱",
-                    "source_evidence": "邮箱域名固定为 mail.tempbox.cn",
+                    "source_evidence": "邮箱域名固定为 mail.example.invalid",
                     "expected_status": 200,
                     "assertions": [
                         {
                             "type": "json_path",
                             "target": "$.email",
                             "operator": "matches",
-                            "expected": r"^[^@]+@mail\.tempbox\.cn$",
+                            "expected": r"^[^@]+@mail\.example\.invalid$",
                         }
                     ],
                 }
@@ -3088,7 +3093,7 @@ def test_coverage_manifest_accepts_stronger_assertion_for_schema_type_obligation
         path="/generate",
         assertions=[
             Assertion("status_code", expected=200),
-            Assertion("json_path", "$.email", "matches", r"^[^@]+@mail\.tempbox\.cn$"),
+            Assertion("json_path", "$.email", "matches", r"^[^@]+@mail\.example\.invalid$"),
         ],
         rule_ids=["BR-EMAIL"],
     )

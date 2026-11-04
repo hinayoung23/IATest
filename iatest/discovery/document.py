@@ -72,7 +72,13 @@ def parse_api_document(text: str, *, source: str = "") -> tuple[list[Endpoint], 
         }
     markdown = extract_markdown(text)
     endpoints = parse_markdown_endpoints(markdown)
-    return endpoints, {"source_type": "markdown", "base_url": detect_base_url(markdown)}
+    metadata = {"source_type": "markdown", "base_url": detect_base_url(markdown)}
+    global_rules = (markdown_section_facts(markdown).get("概览") or ([], {}, {}))[0]
+    if global_rules:
+        # Preserve unscoped evidence for semantic discovery without assigning
+        # application-specific meanings to operation names or response fields.
+        metadata["global_rule_candidates"] = copy.deepcopy(global_rules)
+    return endpoints, metadata
 
 
 def looks_like_openapi_yaml(text: str) -> bool:
@@ -313,8 +319,18 @@ def markdown_section_facts(
 
 
 def global_rules_for_endpoint(rules: list[dict[str, Any]], method: str, path: str) -> list[dict[str, Any]]:
-    from iatest.adapters.tempbox import global_rules_for_endpoint as scoped_rules
-    return scoped_rules(rules, method, path)
+    result = []
+    for rule in rules:
+        text = str(rule.get("source_evidence") or rule.get("description") or "")
+        targets = {
+            (match.group(1).upper(), match.group(2).rstrip(".,:;，。；："))
+            for match in re.finditer(
+                r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+`?(/[^\s`]+)", text, re.I
+            )
+        }
+        if (method.upper(), path) in targets:
+            result.append(copy.deepcopy(rule))
+    return result
 
 
 def add_markdown_response_example(
