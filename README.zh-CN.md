@@ -21,16 +21,16 @@ IATest 把业务目标连接为真实界面操作、独立回放和可复用测�
 
 通过本地 Web 控制台或 CLI 使用。目标、用例、计划、规则和指标资料统一管理；原始断言与证据和 AI 解读分别呈现。
 
-2.0.1 已移除遗留的项目专属契约适配器。接口路由、域名、业务链路和用例标题依据当前项目证据生成；重新生成旧版接口用例前，请阅读[修复说明](docs/releases/2.0.1.md)。
+2.1.0 将项目资产统一保存为按测试类型分类的可读文件，查询索引可重建，并兼容迁移旧目录和数据库。升级前请阅读[版本与迁移说明](docs/releases/2.1.0.md)。
 
-![从目标、观察探索、独立回放到资产和证据的工作流](https://raw.githubusercontent.com/hinayoung23/IATest/v2.0.1/docs/assets/workflow.svg)
+![从目标、观察探索、独立回放到资产和证据的工作流](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.0/docs/assets/workflow.svg)
 
 ## 快速开始
 
 需要 **Python 3.11+**。浏览器、手机和桌面测试按目标另行准备环境。
 
 ```sh
-python -m pip install "iatest-framework==2.0.1"
+python -m pip install "iatest-framework==2.1.0"
 mkdir my-tests
 cd my-tests
 iatest init --project demo
@@ -115,8 +115,8 @@ iatest mobile doctor
 ### 可选依赖
 
 ```sh
-python -m pip install "iatest-framework[database]==2.0.1"
-python -m pip install "iatest-framework[hid]==2.0.1"
+python -m pip install "iatest-framework[database]==2.1.0"
+python -m pip install "iatest-framework[hid]==2.1.0"
 ```
 
 `database` 提供 PostgreSQL/MySQL 驱动与 SQL 授权检查；`hid` 提供可选 HID 中文输入所需拼音支持。这些依赖不会安装浏览器、Android SDK、Xcode 或外接硬件。

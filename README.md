@@ -21,16 +21,16 @@ IATest turns a business goal into an observed UI journey, independent replay and
 
 Use the local Web console or CLI. Keep goals, cases, plans, rules and measurement assets together. Review original assertions and evidence alongside any AI explanation.
 
-Version 2.0.1 removes a legacy application-specific contract adapter. Routes, domains, business chains and generated titles now follow the selected project's evidence. See the [patch notes](docs/releases/2.0.1.md) before regenerating API cases created with earlier versions.
+Version 2.1.0 stores project assets as readable files grouped by test type, with rebuildable query indexes and compatible migration from previous layouts. See the [release and migration notes](docs/releases/2.1.0.md).
 
-![IATest workflow: goal, exploration, independent replay, reusable assets and results](https://raw.githubusercontent.com/hinayoung23/IATest/v2.0.1/docs/assets/workflow.svg)
+![IATest workflow: goal, exploration, independent replay, reusable assets and results](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.0/docs/assets/workflow.svg)
 
 ## Quick start
 
 Requires **Python 3.11+**. Extra tools depend on the target you test.
 
 ```sh
-python -m pip install "iatest-framework==2.0.1"
+python -m pip install "iatest-framework==2.1.0"
 mkdir my-tests
 cd my-tests
 iatest init --project demo
@@ -116,10 +116,10 @@ Platform support has specific boundaries. Safari uses an explicit navigation-onl
 
 ```sh
 # PostgreSQL/MySQL drivers and SQL authorization checks
-python -m pip install "iatest-framework[database]==2.0.1"
+python -m pip install "iatest-framework[database]==2.1.0"
 
 # Pinyin support for the optional HID Chinese-input channel
-python -m pip install "iatest-framework[hid]==2.0.1"
+python -m pip install "iatest-framework[hid]==2.1.0"
 ```
 
 These extras do not install browsers, Android SDKs, Xcode or HID hardware.
