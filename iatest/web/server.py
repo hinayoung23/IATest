@@ -416,7 +416,7 @@ def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandle
                         raise ValueError("Invalid evidence URL")
                     store = EngineStore(root, project) if parsed.path.startswith("/testing-evidence/") else MobileStore(root, project)
                     evidence = store.evidence_path(parts[2], parts[3])
-                    if not evidence.resolve().is_relative_to((store.directory / "evidence").resolve()):
+                    if not any(evidence.resolve().is_relative_to(base.resolve()) for base in store.evidence_roots):
                         raise ValueError("Evidence path escaped project")
                     data = evidence.read_bytes()
                     if len(data) > 8 * 1024 * 1024:

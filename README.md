@@ -88,6 +88,8 @@ Saved deterministic plans run without model calls. AI is used when you request e
 
 The console separates **Test workspace**, **Devices & environments**, **Test assets**, **Runs & reports**, **Project knowledge** and **Settings**. The asset library treats UI, API, performance and security assets consistently, with filtering and links between goal cases and compiled plans.
 
+Project assets follow `projects/<project>/assets/<test-type>/`: API, Web, desktop, Android, iOS, performance and security each have readable plan, case and rule files. Results and evidence live under `reports/<test-type>/`; SQLite provides rebuildable query views and internal state. Existing layouts migrate without deleting the originals. See [project storage and migration](docs/guides/project-assets.md).
+
 ## What you can test
 
 | Target | Capabilities | Preparation |

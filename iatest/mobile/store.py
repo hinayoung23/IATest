@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from iatest.core.paths import project_runtime_dir
+from iatest.core.paths import (
+    project_assets_dir,
+    project_reports_root,
+    project_runtime_dir,
+)
 from iatest.core.redaction import redact
+from iatest.data.project_storage import ProjectAssetIndex
 from iatest.engines.contracts import EngineResult, ExecutionPlan
 from iatest.mobile.contracts import validate_mobile_plan
 
@@ -203,23 +207,29 @@ class MobileStore:
     def __init__(self, root: Path, project: str):
         self.root, self.project = root, project
         self.directory = project_runtime_dir(root, project) / "mobile"
-        self.path = self.directory / "mobile.sqlite3"
+        self.index = ProjectAssetIndex(root, project, "mobile")
+        self.path = self.index.path
 
     @contextmanager
     def connection(self):
-        self.directory.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        try:
-            conn.execute("pragma journal_mode=WAL")
-            conn.executescript("""
-                create table if not exists assets(kind text, id text, content text not null, primary key(kind,id));
-                create table if not exists runs(id text primary key, plan_id text, created_at text, content text not null);
-            """)
+        with self.index.connection() as conn:
             yield conn
-            conn.commit()
-        finally:
-            conn.close()
+
+    def has_assets(self) -> bool:
+        return (
+            self.path.is_file()
+            or self.index.legacy.is_file()
+            or any(
+                next(
+                    (
+                        project_assets_dir(self.root, self.project) / kind / "profiles"
+                    ).glob("*.json"),
+                    None,
+                )
+                is not None
+                for kind in ("android", "ios")
+            )
+        )
 
     def save_profile(self, value: dict) -> None:
         self._save("profile", value["id"], validate_profile(value))
@@ -292,8 +302,16 @@ class MobileStore:
             {**json.loads(r["content"]), "created_at": r["created_at"]} for r in rows
         ]
 
-    def evidence_path(self, run_id: str, name: str) -> Path:
-        asset_id(run_id)
-        if not re.fullmatch(r"[a-f0-9]{32}\.png", name):
-            raise ValueError("Invalid evidence name")
-        return self.directory / "evidence" / run_id / name
+    @property
+    def evidence_roots(self):
+        return (
+            project_reports_root(self.root, self.project),
+            self.directory / "evidence",
+        )
+
+    def evidence_path(self, run_id: str, name: str, *, kind=None) -> Path:
+        from iatest.data.project_storage import evidence_path
+
+        if not name.endswith(".png"):
+            raise ValueError("Invalid mobile evidence name")
+        return evidence_path(self.root, self.project, "mobile", run_id, name, kind=kind)

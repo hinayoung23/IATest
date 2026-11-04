@@ -51,6 +51,13 @@ def load_artifact(directory, relative, default):
         return strict_json(read_file(path, 20_000_000))
 
 
+def api_artifact_path(directory, current, legacy):
+    """Read both layouts without migrating or reviving deleted legacy files."""
+    path = artifact_path(directory, "assets/api/" + current)
+    migrated = load_artifact(directory, ".iatest/storage-layout.json", {}).get("layout_version") == 2
+    return path if path.is_file() or migrated else artifact_path(directory, legacy)
+
+
 class MCPServer:
     def __init__(self, root: Path):
         self.root, self.initialized, self.ready = root.resolve(), False, False
@@ -81,13 +88,14 @@ class MCPServer:
 
     def contracts(self, args):
         directory = project_directory(self.root, args["project"])
-        items = load_artifact(directory, "api_docs/endpoints.json", [])
+        path = api_artifact_path(directory, "documents/endpoints.json", "api_docs/endpoints.json")
+        items = load_artifact(directory, path.relative_to(directory), [])
         return self.page(items, args)
 
     def cases(self, args):
         from iatest.generator.cases import parse_cases_markdown
         directory = project_directory(self.root, args["project"])
-        path = artifact_path(directory, f"test_cases/{args['project']}.md")
+        path = api_artifact_path(directory, f"cases/{args['project']}.md", f"test_cases/{args['project']}.md")
         if not path.is_file():
             return self.page([], args)
         with policy_scope(None):
@@ -96,7 +104,8 @@ class MCPServer:
 
     def coverage(self, args):
         directory = project_directory(self.root, args["project"])
-        return {"manifest": load_artifact(directory, "test_cases/coverage-manifest.json", {})}
+        path = api_artifact_path(directory, "cases/coverage-manifest.json", "test_cases/coverage-manifest.json")
+        return {"manifest": load_artifact(directory, path.relative_to(directory), {})}
 
     def results(self, args):
         directory = project_directory(self.root, args["project"])

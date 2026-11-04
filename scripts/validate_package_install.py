@@ -87,6 +87,27 @@ def main():
         )
         assert result["verdict"] == "passed", result
         checks["installed_process_worker"] = True
+        from iatest.engines.store import EngineStore
+        from iatest.mobile.store import MobileStore
+
+        store = EngineStore(root, "installed")
+        saved_plan = {
+            "id": "saved-data", "kind": "data",
+            "spec": {"records": [{"id": 1}], "checks": [{"id": "unique", "rule": "unique", "path": "$.id"}]},
+        }
+        store.save_plan(saved_plan)
+        store.save_artifact("security_library", {"rules": []}, artifact_id="rules")
+        MobileStore(root, "installed").save_profile({
+            "id": "phone", "platform": "android", "device_id": "test-device", "app_id": "com.example.app",
+        })
+        assets = root / "projects/installed/assets"
+        assert json.loads((assets / "data/plans/saved-data.json").read_text())["spec"] == saved_plan["spec"]
+        assert (assets / "security/rules/rules.json").is_file()
+        assert (assets / "android/profiles/phone.json").is_file()
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(store.path) + suffix).unlink(missing_ok=True)
+        assert store.get_plan("saved-data")["spec"] == saved_plan["spec"]
+        checks["project_files_and_rebuilt_asset_index"] = True
         assert not {"psycopg", "pymysql", "sqlglot", "pypinyin"}.intersection(
             sys.modules
         )

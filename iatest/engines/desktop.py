@@ -582,9 +582,9 @@ class DesktopEngine:
                                 "max_evidence_bytes", 8388608
                             ):
                                 raise ValueError("Desktop evidence quota exceeded")
-                            name = f"desktop-{index}.png"
+                            name = uuid.uuid4().hex + ".png"
                             path = EngineStore(self.root, self.project).evidence_path(
-                                result.run_id, name
+                                result.run_id, name, kind=plan.kind
                             )
                             path.parent.mkdir(parents=True, exist_ok=True)
                             atomic_write_bytes(path, data)

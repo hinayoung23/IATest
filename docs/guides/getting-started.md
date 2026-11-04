@@ -22,6 +22,8 @@ iatest web --project my-project
 
 初始化会创建 `iatest.json`，业务资产保存在 `projects/my-project/`。本地 `.env` 可提供环境变量；密钥使用变量名引用，不写入用例或提交到版本库。
 
+各类资产统一放在 `projects/my-project/assets/<测试类型>/`：接口文档与用例位于 `api/`，Web、桌面、手机、性能和安全有各自的目录，计划、目标用例与规则保存为 JSON/Markdown。运行结果和证据放在 `reports/`，SQLite 用于查询缓存及内部状态。旧结构兼容迁移，详见[项目资产与目录](project-assets.md)。
+
 ## 配置模型与服务
 
 在控制台的「配置中心」设置主控、用例生成、结果分析模型。未单独配置的角色复用主控模型。模型支持工具或图像输入时需明确声明相应能力。

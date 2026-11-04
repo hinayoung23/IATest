@@ -955,7 +955,7 @@ class WebEngine:
                             raise ValueError("Evidence quota exceeded")
                         name = uuid.uuid4().hex + ".bin"
                         path = EngineStore(self.root, self.project).evidence_path(
-                            result.run_id, name
+                            result.run_id, name, kind=plan.kind
                         )
                         path.parent.mkdir(parents=True, exist_ok=True)
                         atomic_write_bytes(path, data)
@@ -1023,7 +1023,7 @@ class WebEngine:
                         raise ValueError("Screenshot quota exceeded")
                     name = uuid.uuid4().hex + ".png"
                     path = EngineStore(self.root, self.project).evidence_path(
-                        result.run_id, name
+                        result.run_id, name, kind=plan.kind
                     )
                     path.parent.mkdir(parents=True, exist_ok=True)
                     atomic_write_bytes(path, data)

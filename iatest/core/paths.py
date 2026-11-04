@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 PROJECT_CONFIG = "iatest.json"
 
@@ -16,6 +15,9 @@ def project_root(start: Path | None = None) -> Path:
 
 
 def ensure_project_dirs(root: Path, project: str = "default") -> None:
+    from iatest.data.project_storage import ensure_project_layout
+
+    ensure_project_layout(root, project)
     for path in [
         root / ".iatest",
         project_docs_dir(root, project),
@@ -35,7 +37,29 @@ def projects_dir(root: Path) -> Path:
 
 
 def project_dir(root: Path, project: str = "default") -> Path:
-    return projects_dir(root) / safe_project_name(project)
+    name = safe_project_name(project)
+    if name in {".", ".."}:
+        raise ValueError("Invalid project name")
+    directory = projects_dir(root) / name
+    if directory.resolve() != projects_dir(root).resolve() / name:
+        raise ValueError("Project directory must not redirect to another location")
+    return directory
+
+
+def _project_path(root: Path, project: str, name: str) -> Path:
+    base = project_dir(root, project)
+    path = base / name
+    if not path.resolve().is_relative_to(base.resolve()):
+        raise ValueError("Path escaped its project: " + str(path))
+    return path
+
+
+def project_assets_dir(root: Path, project: str = "default") -> Path:
+    return _project_path(root, project, "assets")
+
+
+def project_reports_root(root: Path, project: str = "default") -> Path:
+    return _project_path(root, project, "reports")
 
 
 def list_projects(root: Path) -> list[str]:
@@ -47,19 +71,28 @@ def list_projects(root: Path) -> list[str]:
 
 
 def project_docs_dir(root: Path, project: str = "default") -> Path:
-    return project_dir(root, project) / "api_docs"
+    from iatest.data.project_storage import ensure_project_layout
+
+    ensure_project_layout(root, project)
+    return project_assets_dir(root, project) / "api" / "documents"
 
 
 def project_cases_dir(root: Path, project: str = "default") -> Path:
-    return project_dir(root, project) / "test_cases"
+    from iatest.data.project_storage import ensure_project_layout
+
+    ensure_project_layout(root, project)
+    return project_assets_dir(root, project) / "api" / "cases"
 
 
 def project_reports_dir(root: Path, project: str = "default") -> Path:
-    return project_dir(root, project) / "reports"
+    from iatest.data.project_storage import ensure_project_layout
+
+    ensure_project_layout(root, project)
+    return project_reports_root(root, project) / "api"
 
 
 def project_runtime_dir(root: Path, project: str = "default") -> Path:
-    return project_dir(root, project) / ".iatest"
+    return _project_path(root, project, ".iatest")
 
 
 def project_context_dir(root: Path, project: str = "default") -> Path:

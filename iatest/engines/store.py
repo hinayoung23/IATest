@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import uuid
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from iatest.core.paths import project_runtime_dir
+from iatest.core.paths import project_reports_root, project_runtime_dir
 from iatest.core.redaction import redact
+from iatest.data.project_storage import ProjectAssetIndex
 from iatest.engines.contracts import EngineResult, ExecutionPlan
 
 
@@ -24,23 +24,13 @@ class EngineStore:
     def __init__(self, root: Path, project: str):
         self.root, self.project = root, project
         self.directory = project_runtime_dir(root, project) / "testing"
-        self.path = self.directory / "testing.sqlite3"
+        self.index = ProjectAssetIndex(root, project, "testing")
+        self.path = self.index.path
 
     @contextmanager
     def connection(self):
-        self.directory.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, timeout=10)
-        try:
-            conn.execute("pragma journal_mode=WAL")
-            conn.executescript("""
-                create table if not exists plans(id text primary key, kind text, content text not null);
-                create table if not exists runs(id text primary key, created_at text, content text not null);
-                create table if not exists artifacts(kind text, id text, created_at text, content text not null, primary key(kind,id));
-            """)
+        with self.index.connection() as conn:
             yield conn
-            conn.commit()
-        finally:
-            conn.close()
 
     def save_plan(self, value: dict):
         from iatest.engines.validation import validate_plan
@@ -148,10 +138,14 @@ class EngineStore:
             ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
-    def evidence_path(self, run: str, name: str) -> Path:
-        if not re.fullmatch(r"[a-f0-9]{32}\.(?:png|bin)", name):
-            raise ValueError("Invalid evidence name")
-        path = self.directory / "evidence" / identifier(run) / name
-        if not path.resolve().is_relative_to(self.directory.resolve()):
-            raise ValueError("Evidence outside project")
-        return path
+    @property
+    def evidence_roots(self):
+        return (
+            project_reports_root(self.root, self.project),
+            self.directory / "evidence",
+        )
+
+    def evidence_path(self, run: str, name: str, *, kind=None) -> Path:
+        from iatest.data.project_storage import evidence_path
+
+        return evidence_path(self.root, self.project, "testing", run, name, kind=kind)

@@ -13,6 +13,7 @@ IATest 将 API、浏览器、桌面、移动端、性能、安全与数据协议
 
 | 要完成的工作 | 文档 |
 |---|---|
+| 按项目和测试类型管理资产、迁移旧数据 | [项目资产与目录](guides/project-assets.md) |
 | 导入接口、生成并执行用例 | [API 自动化](guides/api-testing.md) |
 | 浏览器输入、frame、Shadow DOM、Safari | [浏览器测试](guides/browser-testing.md) |
 | Mac、Windows、Linux 与 GNOME Wayland | [桌面测试](guides/desktop-testing.md) |

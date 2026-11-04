@@ -44,12 +44,17 @@ def project_operation_lock(
     *,
     operation: str,
     timeout_seconds: float = 300,
+    lock_file: str = "operation.lock",
 ) -> Iterator[None]:
     """Serialize stateful operations for one project across threads and processes."""
     safe_project = safe_project_name(project)
     runtime_dir = project_runtime_dir(root, safe_project)
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    path = runtime_dir / "operation.lock"
+    if lock_file not in {"operation.lock", "storage.lock"}:
+        raise ValueError("Unknown project lock")
+    path = runtime_dir / lock_file
+    if not path.resolve().is_relative_to(runtime_dir.resolve()):
+        raise ValueError("Project lock escaped its runtime directory")
     key = str(path.resolve())
     held = getattr(_LOCAL, "held", {})
     if key in held:

@@ -523,7 +523,7 @@ class MobileEngine:
         self.platform, self.device_factory = platform, device_factory
 
     def capabilities(self) -> dict:
-        profiles = [p for p in self.store.list("profile") if p["platform"] == self.platform] if self.store.path.is_file() else []
+        profiles = [p for p in self.store.list("profile") if p["platform"] == self.platform] if self.store.has_assets() else []
         return {
             "kind": self.platform,
             "available": True,
@@ -826,7 +826,7 @@ class MobileEngine:
                     ):
                         raise ObservationIncomplete("Evidence budget exhausted")
                     name = uuid.uuid4().hex + ".png"
-                    path = self.store.evidence_path(result.run_id, name)
+                    path = self.store.evidence_path(result.run_id, name, kind=result.kind)
                     path.parent.mkdir(parents=True, exist_ok=True)
                     atomic_write_bytes(path, data)
                     result.metrics["evidence_bytes"] += len(data)

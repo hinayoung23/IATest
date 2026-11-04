@@ -994,7 +994,7 @@ def handle_mobile_action(
                         "Preview session quota exhausted; close and reopen the session"
                     )
                 name = uuid.uuid4().hex + ".png"
-                target = store.evidence_path(session.id, name)
+                target = store.evidence_path(session.id, name, kind=session.profile["platform"])
                 target.parent.mkdir(parents=True, exist_ok=True)
                 atomic_write_bytes(target, image)
                 session.preview_bytes = used + len(image)
