@@ -2019,7 +2019,11 @@ def _build_dependency_graph(endpoints: list[Endpoint]) -> dict[str, set[str]]:
     graph: dict[str, set[str]] = {}
     for producer in endpoints:
         key = f"{producer.method} {producer.path}"
-        for name in likely_produced_fields(producer):
+        inputs = set(_re.findall(r'\{(\w+)\}', producer.path))
+        inputs.update(p.get("name", "") for p in producer.parameters if p.get("in") == "path")
+        # Echoing an identifier already required by the request does not
+        # establish a producer. Treating it as one creates circular recipes.
+        for name in likely_produced_fields(producer) - inputs:
             for consumer in param_groups.get(name, []):
                 if consumer != key:
                     graph.setdefault(key, set()).add(consumer)

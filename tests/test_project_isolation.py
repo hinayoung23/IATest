@@ -109,6 +109,9 @@ def test_dependency_graph_requires_a_successful_documented_output():
     })
     expected = {"POST /records":{"GET /records/{record_id}", "DELETE /records/{record_id}"}}
     assert _build_dependency_graph([unrelated, producer, *consumers]) == expected
+    echo = copy.deepcopy(consumers[0])
+    echo.responses = copy.deepcopy(producer.responses)
+    assert _build_dependency_graph([unrelated, producer, echo, consumers[1]]) == expected
     failed_only = copy.deepcopy(producer)
     failed_only.responses = {"400":producer.responses["201"]}
     assert _build_dependency_graph([failed_only, *consumers]) == {}
