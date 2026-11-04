@@ -453,7 +453,9 @@ def test_parallel_remote_jobs_wait_for_reserved_quota_and_return_unused_capacity
     value = {
         "id": "parallel-remote",
         "kind": "workflow",
-        "budget": {"timeout_seconds": 12, "max_requests": 2},
+        # This checks quota handoff, including two cold worker handshakes and
+        # durable storage. Allow slower Windows disks without relaxing quotas.
+        "budget": {"timeout_seconds": 30, "max_requests": 2},
         "spec": {
             "max_parallel": 2,
             "nodes": [

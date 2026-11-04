@@ -15,8 +15,7 @@ except ImportError:  # Windows
     fcntl = None
     import msvcrt
 
-from iatest.core.paths import project_runtime_dir, safe_project_name
-
+from iatest.core.paths import project_runtime_dir, resolved_path, safe_project_name
 
 _LOCAL = threading.local()
 
@@ -53,9 +52,9 @@ def project_operation_lock(
     if lock_file not in {"operation.lock", "storage.lock"}:
         raise ValueError("Unknown project lock")
     path = runtime_dir / lock_file
-    if not path.resolve().is_relative_to(runtime_dir.resolve()):
+    if not resolved_path(path).is_relative_to(resolved_path(runtime_dir)):
         raise ValueError("Project lock escaped its runtime directory")
-    key = str(path.resolve())
+    key = str(resolved_path(path))
     held = getattr(_LOCAL, "held", {})
     if key in held:
         held[key]["depth"] += 1

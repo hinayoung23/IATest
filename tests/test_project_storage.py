@@ -6,7 +6,8 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,7 +19,12 @@ from iatest.application.test_assets import (
 )
 from iatest.core.config import init_project
 from iatest.core.locking import project_operation_lock
-from iatest.core.paths import project_cases_dir, project_docs_dir, project_reports_dir
+from iatest.core.paths import (
+    project_cases_dir,
+    project_docs_dir,
+    project_reports_dir,
+    resolved_path,
+)
 from iatest.engines.contracts import EngineResult, ExecutionPlan
 from iatest.engines.store import EngineStore
 from iatest.mobile.store import MobileStore
@@ -68,6 +74,23 @@ def remove_cache(store):
         Path(str(store.path) + suffix).unlink(missing_ok=True)
 
 
+@pytest.mark.parametrize(
+    "parent,child",
+    [
+        (r"C:\projects\suite", r"\\?\C:\projects\suite\.iatest"),
+        (r"\\?\C:\projects\suite", r"C:\projects\suite\.iatest"),
+        (r"\\host\share\projects\suite", r"\\?\UNC\host\share\projects\suite\.iatest"),
+        (r"\\?\UNC\host\share\projects\suite", r"\\host\share\projects\suite\.iatest"),
+    ],
+)
+def test_equivalent_windows_paths_keep_the_same_project_boundary(parent, child):
+    def canonical(value):
+        return resolved_path(SimpleNamespace(resolve=lambda: PureWindowsPath(value)))
+
+    assert canonical(child).is_relative_to(canonical(parent))
+    assert not canonical(child).is_relative_to(canonical(parent).with_name("other"))
+
+
 def test_every_plan_type_has_readable_project_files(tmp_path):
     examples = Path(__file__).resolve().parents[1] / "examples/plans"
     store = EngineStore(tmp_path, "suite")
@@ -83,7 +106,7 @@ def test_every_plan_type_has_readable_project_files(tmp_path):
         "workflow.json",
         "ios-launch-performance.json",
     ):
-        value = json.loads((examples / filename).read_text())
+        value = json.loads((examples / filename).read_text(encoding="utf-8"))
         store.save_plan(value)
         directory = (
             "performance/client"
@@ -97,7 +120,7 @@ def test_every_plan_type_has_readable_project_files(tmp_path):
             / "plans"
             / (value["id"] + ".json")
         )
-        assert json.loads(path.read_text())["spec"] == value["spec"]
+        assert json.loads(path.read_text(encoding="utf-8"))["spec"] == value["spec"]
     remove_cache(store)
     assert len(store.plans()) == 10
     other = EngineStore(tmp_path, "other")
@@ -109,7 +132,7 @@ def test_files_are_authoritative_after_edit_delete_and_index_rebuild(tmp_path):
     store = EngineStore(tmp_path, "suite")
     store.save_plan(plan())
     path = tmp_path / "projects/suite/assets/web/plans/journey.json"
-    value = json.loads(path.read_text())
+    value = json.loads(path.read_text(encoding="utf-8"))
     value["title"] = "人工修改后的计划"
     write_json(path, value)
     assert store.get_plan("journey")["title"] == value["title"]
@@ -188,7 +211,7 @@ def test_rules_goal_cases_and_version_history_are_readable_without_changing_payl
             "select created_at from artifacts where id='rules'"
         ).fetchone()[0]
     path = tmp_path / "projects/suite/assets/security/rules/rules.json"
-    assert json.loads(path.read_text()) == rules
+    assert json.loads(path.read_text(encoding="utf-8")) == rules
     assert (tmp_path / "projects/suite/assets/web/cases/goal/goal.json").is_file()
     for policy in ("error", "version"):
         preview = preview_import(

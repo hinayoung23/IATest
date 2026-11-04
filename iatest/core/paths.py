@@ -6,6 +6,18 @@ from pathlib import Path
 PROJECT_CONFIG = "iatest.json"
 
 
+def resolved_path(path: Path) -> Path:
+    """Normalize equivalent Win32 forms returned during concurrent creation."""
+    resolved = path.resolve()
+    value = str(resolved)
+    if resolved.drive.startswith("\\\\?\\"):
+        if value[4:8].upper() == "UNC\\":
+            return type(resolved)("\\\\" + value[8:])
+        if re.match(r"[A-Za-z]:\\", value[4:]):
+            return type(resolved)(value[4:])
+    return resolved
+
+
 def project_root(start: Path | None = None) -> Path:
     current = (start or Path.cwd()).resolve()
     for path in [current, *current.parents]:
@@ -41,7 +53,7 @@ def project_dir(root: Path, project: str = "default") -> Path:
     if name in {".", ".."}:
         raise ValueError("Invalid project name")
     directory = projects_dir(root) / name
-    if directory.resolve() != projects_dir(root).resolve() / name:
+    if resolved_path(directory) != resolved_path(projects_dir(root)) / name:
         raise ValueError("Project directory must not redirect to another location")
     return directory
 
@@ -49,7 +61,7 @@ def project_dir(root: Path, project: str = "default") -> Path:
 def _project_path(root: Path, project: str, name: str) -> Path:
     base = project_dir(root, project)
     path = base / name
-    if not path.resolve().is_relative_to(base.resolve()):
+    if not resolved_path(path).is_relative_to(resolved_path(base)):
         raise ValueError("Path escaped its project: " + str(path))
     return path
 

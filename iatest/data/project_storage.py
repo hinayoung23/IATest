@@ -23,6 +23,7 @@ from iatest.core.paths import (
     project_dir,
     project_reports_root,
     project_runtime_dir,
+    resolved_path,
 )
 
 TYPE_DIRS = {
@@ -138,7 +139,7 @@ def _validate_content(table, kind, value):
 
 
 def _inside(path, base):
-    if not path.resolve().is_relative_to(base.resolve()):
+    if not resolved_path(path).is_relative_to(resolved_path(base)):
         raise ValueError("Asset path escaped its project: " + str(path))
     return path
 
@@ -559,6 +560,7 @@ class ProjectAssetIndex:
 
     def _discover(self):
         assets = project_assets_dir(self.root, self.project)
+        reports = project_reports_root(self.root, self.project)
         files = []
         if self.namespace == "testing":
             for kind, directory in TYPE_DIRS.items():
@@ -604,9 +606,7 @@ class ProjectAssetIndex:
             )
             files.extend(
                 ("runs", p, kind)
-                for p in (
-                    project_reports_root(self.root, self.project) / directory
-                ).glob(pattern)
+                for p in (reports / directory).glob(pattern)
             )
         return files
 
@@ -741,7 +741,7 @@ class ProjectAssetIndex:
     @contextmanager
     def connection(self):
         ensure_project_layout(self.root, self.project)
-        key = str(self.path.resolve())
+        key = str(resolved_path(self.path))
         active = getattr(_LOCAL, "connections", {})
         if key in active:
             yield active[key]
