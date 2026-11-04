@@ -74,6 +74,13 @@ INTERNAL_ARTIFACTS = {
     "import_batch",
 }
 _LOCAL = threading.local()
+TABLE_KEYS = {
+    "plans": ("id",),
+    "runs": ("id",),
+    "artifacts": ("kind", "id"),
+    "case_assets": ("case_id", "version"),
+    "assets": ("kind", "id"),
+}
 
 
 def _identifier(value):
@@ -307,13 +314,7 @@ class ProjectAssetIndex:
         """)
 
     def _key(self, table, row):
-        columns = {
-            "plans": ("id",),
-            "runs": ("id",),
-            "artifacts": ("kind", "id"),
-            "case_assets": ("case_id", "version"),
-            "assets": ("kind", "id"),
-        }[table]
+        columns = TABLE_KEYS[table]
         return tuple(row[column] for column in columns)
 
     def _file(self, table, row):
@@ -715,16 +716,20 @@ class ProjectAssetIndex:
                     "delete from storage_files where table_name=? and key_json=?",
                     tuple(row),
                 )
+        # A crash immediately after legacy import can leave SQL rows whose
+        # files were never registered in storage_files. Never treat these
+        # orphaned cache rows as authoritative assets.
+        for table in self.tables:
+            columns = ",".join(TABLE_KEYS[table])
+            for key_values in conn.execute(
+                "select " + columns + " from " + table
+            ).fetchall():
+                if (table, json.dumps(tuple(key_values))) not in seen:
+                    self._delete(conn, table, key_values)
         self._commit(conn, {})
 
     def _delete(self, conn, table, key):
-        columns = {
-            "plans": ("id",),
-            "runs": ("id",),
-            "artifacts": ("kind", "id"),
-            "case_assets": ("case_id", "version"),
-            "assets": ("kind", "id"),
-        }[table]
+        columns = TABLE_KEYS[table]
         conn.execute(
             "delete from "
             + table

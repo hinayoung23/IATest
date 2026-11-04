@@ -130,6 +130,19 @@ def test_invalid_manual_plan_does_not_fall_back_to_cached_plan(tmp_path):
         store.get_plan("journey")
 
 
+def test_unregistered_cache_rows_cannot_recreate_missing_asset_files(tmp_path):
+    store = EngineStore(tmp_path, "suite")
+    store.save_plan(plan())
+    # State possible after an import committed but the process exited before
+    # registration, and the user subsequently deleted the authoritative file.
+    with sqlite3.connect(store.path) as conn:
+        conn.execute("delete from storage_files where table_name='plans'")
+    path = tmp_path / "projects/suite/assets/web/plans/journey.json"
+    path.unlink()
+    assert store.plans() == []
+    assert not path.exists()
+
+
 def test_plan_type_changes_move_file_without_leaving_a_duplicate(tmp_path):
     store = EngineStore(tmp_path, "suite")
     store.save_plan(plan())
