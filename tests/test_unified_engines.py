@@ -799,13 +799,15 @@ def test_real_browser_plan_evidence_and_proxy(root, server):
     threading.Thread(target=blocked.serve_forever, daemon=True).start()
     browser = BrowserSession(root, "suite", spec, RunControl(timeout_seconds=20))
     try:
+        call_offset = len(_calls)
         response = browser.evaluate(
             f"fetch({json.dumps(base + '/safe-mutation')},{{method:'POST',headers:{{'content-type':'application/json'}},body:JSON.stringify({{name:'proxy-body'}})}}).then(r=>r.json())"
         )
-        assert response["id"] == "order-1" and _calls[-1] == (
-            "/safe-mutation",
-            {"name": "proxy-body"},
-        )
+        assert response["id"] == "order-1"
+        # Chromium may request a favicon after the POST has completed.
+        assert [call for call in _calls[call_offset:] if call[0] == "/safe-mutation"] == [
+            ("/safe-mutation", {"name": "proxy-body"})
+        ]
         destination = f"http://127.0.0.1:{blocked.server_port}/private"
         browser.evaluate(f"fetch({json.dumps(destination)}).catch(()=>null)")
         browser.evaluate(
