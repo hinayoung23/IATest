@@ -6,7 +6,7 @@
 
 AI-driven testing for APIs, browsers, desktop and mobile apps — with performance, security, data and protocol checks in the same workflow.
 
-[![PyPI](https://img.shields.io/pypi/v/iatest-framework)](https://pypi.org/project/iatest-framework/)
+[![PyPI](https://img.shields.io/pypi/v/iatest-framework?cacheSeconds=3600)](https://pypi.org/project/iatest-framework/)
 [![Python](https://img.shields.io/pypi/pyversions/iatest-framework)](https://pypi.org/project/iatest-framework/)
 [![Tests](https://github.com/hinayoung23/IATest/actions/workflows/test.yml/badge.svg)](https://github.com/hinayoung23/IATest/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -23,7 +23,7 @@ Use the local Web console or CLI. Keep goals, cases, plans, rules and measuremen
 
 Version 2.1.1 hardens console sessions, credential destinations and configuration updates, and adds explicit assessment counts and release quality gates. Read the [upgrade notes](docs/releases/2.1.1.md) and [console security guide](docs/guides/console-security.md). The file asset layout introduced in [2.1.0](docs/releases/2.1.0.md) remains compatible.
 
-![IATest workflow: goal, exploration, independent replay, reusable assets and results](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.0/docs/assets/workflow.svg)
+![IATest workflow: goal, exploration, independent replay, reusable assets and results](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.1/docs/assets/workflow.svg)
 
 ## Quick start
 
@@ -118,10 +118,10 @@ Platform support has specific boundaries. Safari uses an explicit navigation-onl
 
 ```sh
 # PostgreSQL/MySQL drivers and SQL authorization checks
-python -m pip install "iatest-framework[database]==2.1.0"
+python -m pip install "iatest-framework[database]==2.1.1"
 
 # Pinyin support for the optional HID Chinese-input channel
-python -m pip install "iatest-framework[hid]==2.1.0"
+python -m pip install "iatest-framework[hid]==2.1.1"
 ```
 
 These extras do not install browsers, Android SDKs, Xcode or HID hardware.

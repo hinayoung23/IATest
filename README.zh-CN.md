@@ -6,7 +6,7 @@
 
 覆盖 API、浏览器、桌面、移动端，以及性能、安全、数据与协议的 AI 自动化测试框架。
 
-[![PyPI](https://img.shields.io/pypi/v/iatest-framework)](https://pypi.org/project/iatest-framework/)
+[![PyPI](https://img.shields.io/pypi/v/iatest-framework?cacheSeconds=3600)](https://pypi.org/project/iatest-framework/)
 [![Python](https://img.shields.io/pypi/pyversions/iatest-framework)](https://pypi.org/project/iatest-framework/)
 [![Tests](https://github.com/hinayoung23/IATest/actions/workflows/test.yml/badge.svg)](https://github.com/hinayoung23/IATest/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -23,7 +23,7 @@ IATest 把业务目标连接为真实界面操作、独立回放和可复用测�
 
 2.1.1 加固控制台会话、凭据发送目标和配置并发更新，补充明确的检查计数与发布质量门禁。升级前请阅读[2.1.1 说明](docs/releases/2.1.1.md)和[控制台安全指南](docs/guides/console-security.md)。[2.1.0](docs/releases/2.1.0.md) 引入的文件资产布局保持兼容。
 
-![从目标、观察探索、独立回放到资产和证据的工作流](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.0/docs/assets/workflow.svg)
+![从目标、观察探索、独立回放到资产和证据的工作流](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.1/docs/assets/workflow.svg)
 
 ## 快速开始
 
@@ -115,8 +115,8 @@ iatest mobile doctor
 ### 可选依赖
 
 ```sh
-python -m pip install "iatest-framework[database]==2.1.0"
-python -m pip install "iatest-framework[hid]==2.1.0"
+python -m pip install "iatest-framework[database]==2.1.1"
+python -m pip install "iatest-framework[hid]==2.1.1"
 ```
 
 `database` 提供 PostgreSQL/MySQL 驱动与 SQL 授权检查；`hid` 提供可选 HID 中文输入所需拼音支持。这些依赖不会安装浏览器、Android SDK、Xcode 或外接硬件。
