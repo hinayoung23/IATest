@@ -82,7 +82,8 @@ def test_perspective_frame_native_input_and_projected_visual_anchor(advanced, cr
         field, button = {'id': 'field', **context}, {'id': 'go', **context}
         browser.act({'op': 'fill', 'target': field, 'value': 'perspective native input'})
         assert browser.assertion({'assert':'value', 'target':field, 'expected':'perspective native input'})[0]
-        browser.evaluate("document.querySelector('#go').style.cssText='appearance:none;background:#0088aa;color:white;border:0;outline:0;box-shadow:none;transition:none;animation:none';document.querySelector('#field').style.caretColor='transparent'")
+        # Keep the projected anchor independent of focused text/caret rasterization.
+        browser.evaluate("document.querySelector('#go').style.cssText='appearance:none;background:#0088aa;width:80px;height:28px;font-size:0;border:0;outline:0;box-shadow:none;transition:none;animation:none';document.querySelector('#field').style.opacity='0'")
         image = browser.visual_region(button)
         rect, clip = image['rect'], image['clip']
         x, y = project(image['matrix'], rect['x'] + rect['width']/2, rect['y'] + rect['height']/2)

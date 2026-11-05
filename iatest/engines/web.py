@@ -15,6 +15,7 @@ from collections import deque
 from pathlib import Path
 
 from iatest.core.files import atomic_write_bytes
+from iatest.engines.browser_wait import wait_for_devtools_endpoint
 from iatest.engines.cdp import CDP
 from iatest.engines.contracts import EngineContext, EngineResult, ExecutionPlan
 from iatest.engines.http import NetworkScope, validate
@@ -426,14 +427,8 @@ class BrowserSession(BrowserContexts, BrowserVisual):
 
                 self.close_job = attach_job(self.process, {}, kill_only=True)
             port_file = Path(self.temp.name) / "DevToolsActivePort"
-            deadline = time.monotonic() + 15
-            while not port_file.exists():
-                control.check()
-                if self.process.poll() is not None or time.monotonic() > deadline:
-                    raise RuntimeError("Chromium startup failed or timed out")
-                control.wait(0.05)
-            port, path = port_file.read_text().splitlines()[:2]
-            self.cdp = CDP(f"ws://127.0.0.1:{int(port)}{path}", control)
+            port, path = wait_for_devtools_endpoint(port_file, self.process, control)
+            self.cdp = CDP(f"ws://127.0.0.1:{port}{path}", control)
             self.version = self.cdp.call("Browser.getVersion")["product"]
             context = self.cdp.call("Target.createBrowserContext")["browserContextId"]
             target = self.cdp.call(

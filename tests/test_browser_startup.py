@@ -5,6 +5,7 @@ import pytest
 
 from iatest.core.config import init_project
 from iatest.engines import web
+from iatest.engines.browser_wait import wait_for_devtools_endpoint
 from iatest.execution.control import RunControl
 
 
@@ -25,6 +26,38 @@ def test_installed_chrome_precedes_unpackaged_chromium(tmp_path, monkeypatch):
     assert web.chromium_path() == ""  # An explicit invalid override must fail closed.
     monkeypatch.setenv("IATEST_CHROMIUM_PATH", str(chromium))
     assert web.chromium_path() == str(chromium)
+
+
+def test_debug_endpoint_waits_for_complete_port_file(tmp_path):
+    port_file = tmp_path / "DevToolsActivePort"
+    writes = iter(["", "43210\n", "43210\n/devtools/browser/test\n"])
+    waits = []
+
+    def wait(seconds):
+        waits.append(seconds)
+        port_file.write_text(next(writes))
+
+    endpoint = wait_for_devtools_endpoint(
+        port_file,
+        SimpleNamespace(poll=lambda: None),
+        SimpleNamespace(check=lambda: None, wait=wait),
+    )
+    assert endpoint == (43210, "/devtools/browser/test")
+    assert len(waits) == 3
+
+
+@pytest.mark.parametrize("contents", ["", "43210\n", "70000\n/devtools/browser/test\n"])
+def test_debug_endpoint_partial_file_obeys_deadline(tmp_path, monkeypatch, contents):
+    port_file = tmp_path / "DevToolsActivePort"
+    port_file.write_text(contents)
+    clock = [0.0]
+    monkeypatch.setattr("iatest.engines.browser_wait.time.monotonic", lambda: clock[0])
+    control = SimpleNamespace(
+        check=lambda: None,
+        wait=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    )
+    with pytest.raises(RuntimeError, match="Chromium startup failed or timed out"):
+        wait_for_devtools_endpoint(port_file, SimpleNamespace(poll=lambda: None), control, timeout=0.1)
 
 
 def test_browser_startup_reports_child_stderr(tmp_path, monkeypatch):
