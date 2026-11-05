@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from iatest.core.schema import schema_errors
 from iatest.engines.data import DATA_PROPERTIES
 from iatest.execution.control import RunControl
+from iatest.engines.verdicts import Verdict
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -96,7 +97,7 @@ class EngineResult:
     plan_id: str
     kind: str
     lifecycle: str = "completed"
-    verdict: str = "not_evaluated"
+    verdict: str = Verdict.NOT_EVALUATED
     run_id: str = ""
     steps: list[dict[str, Any]] = field(default_factory=list)
     evidence: list[dict[str, Any]] = field(default_factory=list)
@@ -105,6 +106,9 @@ class EngineResult:
     limitations: list[str] = field(default_factory=list)
     contract_version: int = 1
     outputs: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.verdict = Verdict(self.verdict)
 
 
 @dataclass(slots=True)
@@ -229,6 +233,9 @@ class EngineRegistry:
                     result.metrics["preparation"] = prepared
                 if vm is not None:
                     result.metrics["os_sandbox"] = vm
+                result.verdict = Verdict(result.verdict)
+                if result.verdict == Verdict.PASSED and result.lifecycle != "completed":
+                    result.verdict = Verdict.INCONCLUSIVE
                 ticket.finish(result)
             if data and (plan.data_generation or plan.input_env):
                 result.metrics["runtime_data"] = data

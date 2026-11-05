@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import hmac
+import ipaddress
+import os
 import re
 import threading
 import time
@@ -67,12 +70,24 @@ def build_mock_server(
         max_history=max(1, min(5000, int(mock.get("max_history", 200)))),
     )
     max_request_bytes = max(1, int(mock.get("max_request_bytes", 1_000_000)))
+    bind_host = host or str(mock.get("host") or "127.0.0.1")
+    try:
+        local = bind_host == "localhost" or ipaddress.ip_address(bind_host).is_loopback
+    except ValueError:
+        local = False
+    if not local and not mock.get("allow_lan", False):
+        raise ValueError("LAN Mock binding requires mock.allow_lan=true")
+    token_name = str(mock.get("management_token_env", ""))
+    from iatest.core.env import env_value
+    management_token = env_value(token_name, "") if token_name else ""
+    if token_name and not management_token:
+        raise ValueError("Mock management credential is not configured")
     server = ReusableThreadingHTTPServer(
         (
-            host or str(mock.get("host") or "127.0.0.1"),
+            bind_host,
             int(port if port is not None else mock.get("port", 8780)),
         ),
-        make_mock_handler(state, max_request_bytes=max_request_bytes),
+        make_mock_handler(state, max_request_bytes=max_request_bytes, management_token=management_token),
     )
     server.mock_state = state  # type: ignore[attr-defined]
     return server
@@ -132,7 +147,7 @@ def validate_mock_routes(value: Any) -> list[dict[str, Any]]:
     return routes
 
 
-def make_mock_handler(state: MockState, *, max_request_bytes: int):
+def make_mock_handler(state: MockState, *, max_request_bytes: int, management_token: str = ""):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -159,6 +174,19 @@ def make_mock_handler(state: MockState, *, max_request_bytes: int):
 
         def handle_mock_request(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path in {"/__iatest_mock__/requests", "/__iatest_mock__/reset"}:
+                from iatest.web.security import ConsoleSecurity
+                security = ConsoleSecurity(port=self.server.server_port)
+                try:
+                    loopback = ipaddress.ip_address(self.client_address[0]).is_loopback
+                except ValueError:
+                    loopback = False
+                origin = self.headers.get("Origin", "")
+                trusted_local = loopback and security.valid_host(self.headers) and (not origin or security.valid_origin(origin))
+                supplied = self.headers.get("Authorization", "").removeprefix("Bearer ")
+                if not (hmac.compare_digest(supplied, management_token) if management_token else trusted_local):
+                    self.respond_json({"error": "mock management access denied"}, status=403)
+                    return
             if parsed.path == "/__iatest_mock__/health" and self.command == "GET":
                 self.respond_json({"status": "ok", "routes": len(state.routes)})
                 return
@@ -177,7 +205,7 @@ def make_mock_handler(state: MockState, *, max_request_bytes: int):
             except ValueError:
                 self.respond_json({"error": "invalid content-length"}, status=400)
                 return
-            if content_length > max_request_bytes:
+            if content_length < 0 or content_length > max_request_bytes:
                 self.respond_json({"error": "request body too large"}, status=413)
                 return
             raw_body = self.rfile.read(content_length) if content_length else b""
@@ -365,7 +393,7 @@ def request_record(
     return {
         "method": method,
         "path": path,
-        "query": query,
+        "query": redact_payload(query),
         "headers": {
             name: ("***" if name in SENSITIVE_HEADERS else value)
             for name, value in headers.items()

@@ -592,8 +592,6 @@ class DesktopEngine:
                             result.evidence.append({"type": "screenshot", "name": name})
                         pending = False
                         result.steps.append({"index": index, "op": op, "result": value})
-                if result.verdict == "not_evaluated":
-                    result.verdict = "passed"
         except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
             result.verdict = "inconclusive"
             result.error = str(exc)
@@ -603,4 +601,7 @@ class DesktopEngine:
         finally:
             if session:
                 session.close()
+        from iatest.engines.verdicts import summarize_checks
+        assessed = [row for row in result.steps if "passed" in row]
+        summarize_checks(result, sum(step["op"] == "expect" for step in plan.spec["steps"]), len(assessed), sum(row["passed"] is False for row in assessed))
         return result

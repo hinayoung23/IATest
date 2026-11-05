@@ -1,0 +1,12 @@
+{
+  "contract_version": 1,
+  "id": "web-ready",
+  "kind": "web",
+  "title": "Profile lab exposes its initial ready status",
+  "budget": {"timeout_seconds": 30, "max_queries": 20},
+  "spec": {
+    "allowed_origins": ["http://127.0.0.1:8766"],
+    "start_url": "http://127.0.0.1:8766/",
+    "steps": [{"op": "expect", "target": {"id": "status"}, "assert": "text", "expected": "Ready"}]
+  }
+}

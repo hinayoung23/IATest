@@ -1,6 +1,7 @@
 """Variable references for native plans, using the existing bounded generator."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import copy
 import os
@@ -116,13 +117,13 @@ def declared_secrets(value):
         if (
             set(value) == {"$env"}
             and isinstance(value["$env"], str)
-            and value["$env"] in os.environ
+            and value["$env"] in environment_values()
         ):
-            yield os.environ[value["$env"]]
+            yield environment_values()[value["$env"]]
         bindings = value.get("input_env", {})
         for env_name in bindings.values() if isinstance(bindings, dict) else ():
-            if isinstance(env_name, str) and env_name in os.environ:
-                yield os.environ[env_name]
+            if isinstance(env_name, str) and env_name in environment_values():
+                yield environment_values()[env_name]
         for child in value.values():
             yield from declared_secrets(child)
     elif isinstance(value, list):
@@ -163,11 +164,11 @@ def plan_values(plan, *, preview=False, namespace=""):
     variables = generate_values(plan.data_generation, seed, plan.id, namespace)
     hidden = []
     for name, env_name in plan.input_env.items():
-        if not preview and env_name not in os.environ:
+        if not preview and env_name not in environment_values():
             raise ValueError(
                 "Referenced input environment variable is missing: " + env_name
             )
-        variables[name] = "credential-preview" if preview else os.environ[env_name]
+        variables[name] = "credential-preview" if preview else environment_values()[env_name]
         hidden.append(variables[name])
     metadata = {
         "namespace": namespace,

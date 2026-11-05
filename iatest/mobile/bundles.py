@@ -1,6 +1,7 @@
 """Bounded split APK inspection and explicit existing-key AAB conversion."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import hashlib
 import os
@@ -101,10 +102,10 @@ def inspect_set(path, output, inspector):
 
 
 def bundletool(*args, control=None):
-    jar = os.environ.get("IATEST_BUNDLETOOL_JAR", "")
-    java = os.environ.get("IATEST_JAVA") or (
-        str(Path(os.environ["JAVA_HOME"]) / "bin/java")
-        if os.environ.get("JAVA_HOME")
+    jar = environment_values().get("IATEST_BUNDLETOOL_JAR", "")
+    java = environment_values().get("IATEST_JAVA") or (
+        str(Path(environment_values()["JAVA_HOME"]) / "bin/java")
+        if environment_values().get("JAVA_HOME")
         else shutil.which("java")
     )
     if not java or not Path(jar).is_file():
@@ -123,16 +124,16 @@ def convert_bundle(path, output, signing, control):
         signing[key]
         for key in ("keystore_env", "store_password_env", "key_password_env")
     ]
-    if any(not os.environ.get(key) for key in required):
+    if any(not environment_values().get(key) for key in required):
         raise ValueError("Existing bundle signing environment references are missing")
-    key = Path(os.environ[signing["keystore_env"]]).resolve(strict=True)
+    key = Path(environment_values()[signing["keystore_env"]]).resolve(strict=True)
     if not key.is_file():
         raise ValueError("Select an existing keystore; no signing keys are generated")
     # bundletool supports pass:/file:, not env:. Never put password values in argv.
     with tempfile.TemporaryDirectory(prefix="iatest-signing-") as private:
         passwords = []
         for name in ("store_password_env", "key_password_env"):
-            value = os.environ[signing[name]]
+            value = environment_values()[signing[name]]
             if "\n" in value or "\r" in value or len(value.encode()) > 4096:
                 raise ValueError("Signing password must be a bounded single line")
             destination = Path(private) / name

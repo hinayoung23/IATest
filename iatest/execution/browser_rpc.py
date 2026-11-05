@@ -1,6 +1,7 @@
 """Persistent bounded browser RPC; models and project secrets remain in the parent."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import base64
 import hashlib
@@ -106,8 +107,8 @@ class RPCBrowser:
             "IATEST_FIREFOX_DRIVER_PATH",
             "IATEST_WEBKIT_DRIVER_PATH",
         ):
-            if self.mode == "process" and os.environ.get(name):
-                env[name] = os.environ[name]
+            if self.mode == "process" and environment_values().get(name):
+                env[name] = environment_values()[name]
         narrowed = {
             **settings,
             "mode": "policy",

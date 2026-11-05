@@ -1,6 +1,7 @@
 """Linearizable etcd transactions for replicated resource authorities."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import base64
 import json
@@ -54,7 +55,7 @@ class EtcdDocument:
         self.key = base64.b64encode(key.encode()).decode()
         headers = {}
         if spec.get("token_env"):
-            token = os.environ.get(spec["token_env"])
+            token = environment_values().get(spec["token_env"])
             if not token:
                 raise ValueError("Existing etcd authentication env is missing")
             headers["Authorization"] = token

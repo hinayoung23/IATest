@@ -1,6 +1,7 @@
 """External USB HID bridge; input capabilities follow configured hardware endpoints."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import json
 import os
@@ -271,7 +272,7 @@ class USBHIDSession:
         self.sequence = 0
         self.epoch = ""
         self.failed = self.closed = False
-        self.token = os.environ.get(settings["token_env"], "")
+        self.token = environment_values().get(settings["token_env"], "")
         if (
             not 32 <= len(self.token) <= 256
             or not self.token.isascii()

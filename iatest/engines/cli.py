@@ -145,7 +145,7 @@ def campaign_run(campaign_id: str, project: str = "default", analyze: bool = Fal
     root, _ = workspace(project)
     result = run_campaign(root, project, campaign_id, analyze=analyze)
     typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
-    if result["verdict"] != "passed":
+    if result["verdict"] != "passed" or result["lifecycle"] != "completed":
         raise typer.Exit(1)
 
 
@@ -249,6 +249,14 @@ def run(plan_id: str, project: str = "default"):
 def reports(project: str = "default"):
     _, store = workspace(project)
     typer.echo(json.dumps(store.runs(), ensure_ascii=False, indent=2))
+
+
+@app.command("prune-results")
+def prune_results_command(project: str = "default", keep: int = 200, apply_changes: bool = typer.Option(False, "--apply")):
+    """Preview old runs/evidence eligible for removal; --apply performs cleanup."""
+    from iatest.application.result_retention import prune_results
+    root, _ = workspace(project)
+    typer.echo(json.dumps(prune_results(root, project, keep=keep, dry_run=not apply_changes), ensure_ascii=False, indent=2))
 
 
 @app.command("visual-find")

@@ -7,6 +7,8 @@ python -m pip install -e ".[test,database,hid]"
 python -m pytest -q
 ```
 
+CI and release builds use `uv.lock` and the hash-checked exports in `requirements/`. For the same environment, install `requirements/ci.txt` with `--require-hashes`, then install this checkout with `--no-deps --no-build-isolation`. When updating dependencies, refresh the lock and both exports together. Run `python -m ruff check .`, `python -m mypy`, and the critical-module coverage checks described in `docs/guides/deterministic-ci.md` before release. Benchmark outputs include the measured environment; compare only matching environments.
+
 ## Source layout
 
 | Directory | Purpose |

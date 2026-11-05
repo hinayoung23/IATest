@@ -615,11 +615,16 @@ class ClientPerformanceEngine:
         if result.verdict == "not_evaluated":
             result.verdict = (
                 "inconclusive"
-                if missing or capture_errors
+                if missing or capture_errors or not result.steps
                 else "passed"
                 if all(s["passed"] for s in result.steps)
                 else "failed"
             )
+        from iatest.engines.verdicts import summarize_checks
+        if result.verdict != "inconclusive":
+            summarize_checks(result, len(plan.spec["thresholds"]), sum(bool(row.get("assessed")) for row in result.steps), sum(bool(row.get("assessed")) and row.get("passed") is False for row in result.steps))
+        else:
+            result.metrics.update(checks_planned=len(plan.spec["thresholds"]), checks_assessed=sum(bool(row.get("assessed")) for row in result.steps), checks_failed=sum(bool(row.get("assessed")) and row.get("passed") is False for row in result.steps))
         return result
 
     def ios_collector(self, profile, control, spec):

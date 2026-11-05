@@ -29,9 +29,10 @@
       <label>Model<input name="model" value="{{MODEL_VALUE}}"></label>
       <label><input type="checkbox" name="supports_tools" {{SUPPORTS_TOOLS_CHECKED}}> Provider 支持原生工具调用</label>
       <label><input type="checkbox" name="supports_images" {{SUPPORTS_IMAGES_CHECKED}}> 模型支持图像输入（启用局部视觉定位）</label>
-      <label>API Key 或环境变量名
+      <label>凭据来源<select name="credential_mode"><option value="reference">环境变量引用</option><option value="secret">输入新凭据</option></select></label>
+      <label>已登记的凭据
         <div class="api-key-control">
-          <input type="text" name="api_key_env" value="" placeholder="{{API_KEY_PLACEHOLDER}}" data-secret-input>
+          <input type="password" name="api_key_env" value="" placeholder="{{API_KEY_PLACEHOLDER}}" autocomplete="new-password" data-secret-input>
           <button type="button" class="ghost" onclick="toggleSecretInput(this)" data-secret-toggle disabled>隐藏</button>
         </div>
       </label>

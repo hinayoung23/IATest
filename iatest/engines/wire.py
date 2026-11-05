@@ -1,6 +1,7 @@
 """Native bounded WebSocket, MQTT 3.1.1/5.0 and binary gRPC/h2 sessions and load."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import base64
 import hashlib
@@ -441,10 +442,10 @@ class MQTT(WireSocket):
             credentials = b""
             for name, bit in (("username_env", 128), ("password_env", 64)):
                 if name in spec:
-                    if spec[name] not in os.environ:
+                    if spec[name] not in environment_values():
                         raise ValueError("MQTT credential environment is missing")
                     flags |= bit
-                    credentials += mqtt_string(os.environ[spec[name]])
+                    credentials += mqtt_string(environment_values()[spec[name]])
             if flags & 64 and not flags & 128:
                 raise ValueError("Password requires username")
             self.packet(

@@ -1,6 +1,7 @@
 """Authorized SELECTs over PostgreSQL/MySQL; optional drivers never load for SQLite."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import datetime
 import decimal
@@ -234,7 +235,7 @@ def network(source, root, project):
             raise ValueError("A CA reference requires verified database TLS")
         ca = SandboxPolicy.from_config(
             root, load_config(root), project=project
-        ).check_path(os.environ.get(source["tls_ca_env"], ""))
+        ).check_path(environment_values().get(source["tls_ca_env"], ""))
         if ACTIVE_POLICY.get():
             ACTIVE_POLICY.get().check_path(ca)
         if not ca.is_file() or ca.stat().st_size > 1048576:
@@ -247,9 +248,9 @@ def read_network_records(source, control, *, root, project):
     tls, address, ca = network(source, root, project)
     credentials = {}
     for key, reference in source["credentials"].items():
-        if reference["$env"] not in os.environ:
+        if reference["$env"] not in environment_values():
             raise ValueError("Database credential environment reference is missing")
-        credentials[key] = os.environ[reference["$env"]]
+        credentials[key] = environment_values()[reference["$env"]]
         if len(credentials[key]) > (256 if key == "username" else 16384):
             raise ValueError("Database credential reference exceeds quota")
     driver = optional("psycopg" if source["driver"] == "postgresql" else "pymysql")

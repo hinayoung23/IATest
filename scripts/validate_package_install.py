@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.metadata
+import http.cookiejar
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -134,11 +136,17 @@ def main():
             stderr=subprocess.STDOUT,
         )
         try:
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
             base = f"http://127.0.0.1:{port}"
             deadline = time.monotonic() + 45
             while True:
                 try:
+                    logs.seek(0)
+                    output = logs.read().decode("utf-8", "replace")
+                    authorization = re.search(r"/session\?token=([A-Za-z0-9_-]+)", output)
+                    if authorization:
+                        with opener.open(base + authorization.group(0), timeout=10) as response:
+                            assert response.status == 200
                     with opener.open(base, timeout=10) as response:
                         assert response.status == 200
                         break

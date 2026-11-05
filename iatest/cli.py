@@ -87,6 +87,18 @@ def init(project: str = "default") -> None:
     console.print(f"[green]已初始化:[/green] {path}")
 
 
+@app.command("llm-trust")
+def llm_trust(
+    base_url: str,
+    credential: str,
+    allow_http: bool = typer.Option(False, help="显式登记内网 HTTP 模型服务；远端默认要求 HTTPS"),
+) -> None:
+    """在本机登记模型目标与环境变量引用；不读取或显示凭据值。"""
+    from iatest.ai.connections import enroll_connection
+    enroll_connection(cwd_root(), base_url, credential, allow_http=allow_http)
+    console.print("[green]已登记模型连接与凭据引用[/green]")
+
+
 @app.command("language")
 def artifact_language(
     language: str = typer.Argument("", help="产物语言：en、zh、ja、fr 或 ru；留空查看当前值"),
@@ -528,6 +540,16 @@ def context_rebuild_index(project: str = "default") -> None:
     indexed = rebuild_fts_index(root, project)
     memory = rebuild_project_memory(root, project)
     console.print(f"[green]上下文索引/项目记忆已重建:[/green] indexed={indexed} memory={memory}")
+
+
+@context_app.command("check-index")
+def context_check_index(project: str = "default", repair: bool = False) -> None:
+    """检查全文索引内容与结构；--repair 从知识正文修复。"""
+    from iatest.context.storage import check_fts_index
+    result = check_fts_index(cwd_root(), project, repair=repair)
+    console.print_json(data=result)
+    if not result["ok"]:
+        raise typer.Exit(1)
 
 
 @context_app.command("prune-packs")

@@ -16,4 +16,6 @@ dist/
 build/
 *.egg
 native/mobile/build/
-uv.lock
+.coverage
+coverage.xml
+htmlcov/

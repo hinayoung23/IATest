@@ -1,6 +1,7 @@
 """Standalone stdlib-only entry point, also shipped as start-node.py in node ZIPs."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import argparse
 import getpass
@@ -35,7 +36,7 @@ def start(bundle, *, python=sys.executable, workspace=None):
     token_name = config["token_env"]
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", token_name):
         raise ValueError("Invalid pairing token environment variable name")
-    token = os.environ.get(token_name) or getpass.getpass(
+    token = environment_values().get(token_name) or getpass.getpass(
         "Node pairing token (not your Windows password): "
     )
     if len(token) < 16:
@@ -68,7 +69,7 @@ def start(bundle, *, python=sys.executable, workspace=None):
         ],
         check=True,
     )
-    environment = {**os.environ, token_name: token}
+    environment = {**environment_values(), token_name: token}
     subprocess.run(
         [str(executable), "-m", "iatest", "init", "--project", config["project"]],
         cwd=workspace,

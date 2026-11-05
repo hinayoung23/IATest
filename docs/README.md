@@ -5,6 +5,8 @@ IATest 将 API、浏览器、桌面、移动端、性能、安全与数据协议
 ## 开始使用
 
 - [安装与第一个项目](guides/getting-started.md)
+- [无模型运行与 CI 门禁](guides/deterministic-ci.md)
+- [控制台、凭据与运行边界](guides/console-security.md)
 - [环境与外部工具](reference/environment.md)
 - [能力与平台边界](reference/capabilities.md)
 - [Web 控制台](guides/web-console.md)
@@ -41,4 +43,4 @@ IATest 将 API、浏览器、桌面、移动端、性能、安全与数据协议
 - [上下文与知识治理](design/context.md)
 - [控制台视觉与交互规范](design/web-console.md)
 
-文档按主题维护：指南说明如何使用，规范说明契约和边界，设计说明实现机制。日常更新直接修订对应章节，不追加开发轮次、临时测试计数或设备调试流水。正式版本变更保留在 [2.1.0 版本与迁移说明](releases/2.1.0.md)。
+文档按主题维护：指南说明如何使用，规范说明契约和边界，设计说明实现机制。日常更新直接修订对应章节，不追加开发轮次、临时测试计数或设备调试流水。正式版本变更见 [2.1.1 安全与质量更新](releases/2.1.1.md)和 [2.1.0 资产迁移说明](releases/2.1.0.md)。

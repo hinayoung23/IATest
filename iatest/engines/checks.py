@@ -1,6 +1,7 @@
 """Finite data quality, HTTP protocol and targeted accessibility contracts."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import json
 
@@ -266,7 +267,7 @@ class ChecksEngine:
 
                 if plan.spec["database"]["driver"] == "sqlite":
                     SandboxPolicy.from_config(self.root, load_config(self.root), project=self.project).check_path(
-                        os.environ.get(plan.spec["database"]["path_env"], ""))
+                        environment_values().get(plan.spec["database"]["path_env"], ""))
                 records = read_records(plan.spec["database"], context.control, root=self.root, project=self.project)
                 result.metrics["database_driver"] = plan.spec["database"]["driver"]
             if self.kind == "accessibility":
@@ -398,7 +399,7 @@ class ChecksEngine:
                 browser.close()
             if client:
                 client.close()
-        assessed = sum(r["verdict"] != "inconclusive" for r in result.steps)
+        assessed = sum(r["verdict"] in {"passed", "failed"} for r in result.steps)
         result.metrics = {
             "checks": len(plan.spec["checks"]),
             "assessed": assessed,
@@ -415,4 +416,6 @@ class ChecksEngine:
         )
         if context.control.reason():
             result.lifecycle, result.error = "cancelled", context.control.reason()
+        from iatest.engines.verdicts import assessment_metrics
+        result.metrics.update(assessment_metrics(len(plan.spec["checks"]), assessed, sum(row["verdict"] == "failed" for row in result.steps)))
         return result

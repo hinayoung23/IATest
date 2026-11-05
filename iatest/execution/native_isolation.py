@@ -1,6 +1,7 @@
 """Minimal native workers with per-request host grants and bounded evidence."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import copy
 import json
@@ -89,7 +90,7 @@ def stage_databases(value, policy, directory, worker_directory, maximum, control
     if value.get("kind") == "data" and source and source["driver"] != "sqlite":
         if source.get("tls_ca_env"):
             env_name = source["tls_ca_env"]
-            path = policy.check_path(os.environ.get(env_name, ""))
+            path = policy.check_path(environment_values().get(env_name, ""))
             if ACTIVE_POLICY.get() is not None:
                 ACTIVE_POLICY.get().check_path(path)
             content = read_file(path, min(maximum, 1048576))
@@ -101,7 +102,7 @@ def stage_databases(value, policy, directory, worker_directory, maximum, control
         return 0, overrides
     if value.get("kind") == "data" and source:
         env_name = source["path_env"]
-        path = policy.check_path(os.environ.get(env_name, ""))
+        path = policy.check_path(environment_values().get(env_name, ""))
         if ACTIVE_POLICY.get() is not None:
             ACTIVE_POLICY.get().check_path(path)
         if not path.is_file() or path.stat().st_size > maximum:
@@ -179,9 +180,9 @@ def execute_native_isolated(engine, plan, context):
         env = worker_environment({**settings, "env_allowlist": []}, work)
         # Explicit business references only. No dotenv/config/model secrets copied.
         for key in referenced_env(raw):
-            if not isinstance(key, str) or key not in os.environ:
+            if not isinstance(key, str) or key not in environment_values():
                 raise ValueError("Referenced worker credential is missing")
-            env[key] = os.environ[key]
+            env[key] = environment_values()[key]
         db_bytes, db_env = stage_databases(raw, policy, files, worker_files, max_input - used, context.control)
         used += db_bytes
         env.update(db_env)

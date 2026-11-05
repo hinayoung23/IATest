@@ -1,6 +1,7 @@
 """Read-only, evidence-linked analysis. Test verdicts remain engine-owned."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import hashlib
 import json
@@ -84,7 +85,7 @@ def identity_fingerprint(plan):
     def identities(value):
         if isinstance(value, dict):
             if set(value) == {"$env"} and isinstance(value["$env"], str):
-                yield [value["$env"], os.environ.get(value["$env"])]
+                yield [value["$env"], environment_values().get(value["$env"])]
             for child in value.values():
                 yield from identities(child)
         elif isinstance(value, list):
@@ -95,7 +96,7 @@ def identity_fingerprint(plan):
         {
             "refs": list(identities(plan.spec)),
             "inputs": {
-                name: os.environ.get(env) for name, env in plan.input_env.items()
+                name: environment_values().get(env) for name, env in plan.input_env.items()
             },
         }
     )

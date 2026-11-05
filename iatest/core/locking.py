@@ -54,6 +54,25 @@ def project_operation_lock(
     path = runtime_dir / lock_file
     if not resolved_path(path).is_relative_to(resolved_path(runtime_dir)):
         raise ValueError("Project lock escaped its runtime directory")
+    with file_lock(path, operation=operation, timeout_seconds=timeout_seconds):
+        yield
+
+
+@contextmanager
+def workspace_config_lock(root: Path) -> Iterator[None]:
+    """Protect the workspace configuration shared by every project."""
+    directory = root / ".iatest"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "config.lock"
+    if not resolved_path(path).is_relative_to(resolved_path(root)):
+        raise ValueError("Configuration lock escaped workspace")
+    with file_lock(path, operation="configuration", timeout_seconds=30):
+        yield
+
+
+@contextmanager
+def file_lock(path: Path, *, operation: str, timeout_seconds: float) -> Iterator[None]:
+    """Reentrant in one thread; kernel-backed across threads and processes."""
     key = str(resolved_path(path))
     held = getattr(_LOCAL, "held", {})
     if key in held:
@@ -79,7 +98,7 @@ def project_operation_lock(
                 raise
             if time.monotonic() >= deadline:
                 handle.close()
-                raise TimeoutError(f"项目 {safe_project} 正在执行其它操作，等待 {timeout_seconds:g} 秒后仍未获得锁")
+                raise TimeoutError(f"资源 {path.name} 正在执行其它操作，等待 {timeout_seconds:g} 秒后仍未获得锁")
             from iatest.execution.control import check_control
             try:
                 check_control()

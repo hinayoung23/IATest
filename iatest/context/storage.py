@@ -391,6 +391,32 @@ def rebuild_fts_index(root: Path, project: str = "default") -> int:
         return count
 
 
+def check_fts_index(root: Path, project: str = "default", *, repair: bool = False) -> dict[str, Any]:
+    """Explicit full logical/inverted-index check, never on the read hot path."""
+    with context_connection(root, project) as conn:
+        try:
+            conn.execute("insert into lessons_fts(lessons_fts) values('integrity-check')")
+            mismatched = int(conn.execute("""
+                select count(*) from (
+                    select id,title,content from lessons except select id,title,content from lessons_fts
+                )
+            """).fetchone()[0])
+            extra = int(conn.execute("""
+                select count(*) from (
+                    select id,title,content from lessons_fts except select id,title,content from lessons
+                )
+            """).fetchone()[0])
+            ok = not (mismatched or extra)
+        except sqlite3.OperationalError as exc:
+            return {"available": False, "ok": False, "error_type": type(exc).__name__, "repaired": False}
+        except sqlite3.DatabaseError:
+            ok, mismatched, extra = False, -1, -1
+        if repair and not ok:
+            rebuild_fts(conn)
+            audit(conn, "context_index_repaired", "lesson", project, project, "system", {})
+        return {"available": True, "ok": ok or repair, "mismatched": mismatched, "extra": extra, "repaired": bool(repair and not ok)}
+
+
 def migrate_project(root: Path, project: str = "default") -> Path:
     with context_connection(root, project):
         pass

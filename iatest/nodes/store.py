@@ -1,4 +1,5 @@
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import json
 import os
@@ -108,12 +109,12 @@ def input_proof(value):
     def visit(item):
         if isinstance(item, dict):
             if set(item) == {"$env"}:
-                refs[item["$env"]] = os.environ.get(item["$env"])
+                refs[item["$env"]] = environment_values().get(item["$env"])
             for env in item.get("input_env", {}).values():
-                refs[env] = os.environ.get(env)
+                refs[env] = environment_values().get(env)
             for key in ("path_env", "username_env", "password_env"):
                 if key in item:
-                    refs[item[key]] = os.environ.get(item[key])
+                    refs[item[key]] = environment_values().get(item[key])
             for v in item.values():
                 visit(v)
         elif isinstance(item, list):
@@ -230,7 +231,7 @@ class ControllerStore:
 
     def authenticate(self, node_id, token):
         node = next((n for n in self.nodes() if n["id"] == node_id), None)
-        expected = os.environ.get(node["profile"]["token_env"], "") if node else ""
+        expected = environment_values().get(node["profile"]["token_env"], "") if node else ""
         return (
             node
             if expected

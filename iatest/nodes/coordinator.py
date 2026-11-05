@@ -1,6 +1,7 @@
 """Shared resource authority for independent controllers, without automatic failover."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import hmac
 import json
@@ -192,7 +193,7 @@ def make_coordinator(
     entries = {item["id"]: item for item in identities}
     if not entries or any(
         set(item) - {"id", "token_env", "resources"}
-        or not os.environ.get(item.get("token_env", ""))
+        or not environment_values().get(item.get("token_env", ""))
         or not isinstance(item.get("resources"), list)
         for item in entries.values()
     ):
@@ -223,7 +224,7 @@ def make_coordinator(
             status, result = 200, {}
             try:
                 if not entry or not hmac.compare_digest(
-                    token.encode(), os.environ[entry["token_env"]].encode()
+                    token.encode(), environment_values()[entry["token_env"]].encode()
                 ):
                     status = 401
                     raise ValueError("Controller authentication failed")
@@ -339,7 +340,7 @@ class CoordinatorClient:
             raise ValueError(
                 "Coordinator URL must use TLS outside loopback and contain no credentials"
             )
-        token = os.environ.get(spec["token_env"])
+        token = environment_values().get(spec["token_env"])
         if not token:
             raise ValueError("Existing coordinator credential environment is missing")
         self.ttl = spec.get("ttl", 10)

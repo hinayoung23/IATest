@@ -88,6 +88,8 @@ def render_report_markdown(
     cleanup_failed = sum(1 for item in results if lifecycle_contains_status(item.cleanup, "failed"))
     cleanup_skipped = sum(1 for item in results if lifecycle_contains_status(item.cleanup, "skipped"))
     total = len(results)
+    if outcome := getattr(analysis, "outcome", None):
+        metadata = {**(metadata or {}), "ai_analysis": {"status": outcome.status, "run_id": outcome.run_id, "error_code": outcome.error_code, "retryable": outcome.retryable}}
     lines = [
         f"# {safe_project_name(project)} {t('test_execution_report')} - {now.strftime('%Y-%m-%d %H:%M:%S')}",
         "",

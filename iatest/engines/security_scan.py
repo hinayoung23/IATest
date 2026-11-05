@@ -369,6 +369,10 @@ class SecurityScan:
                 "not_assessed": unassessed,
                 "requests": context.control.request_count() - start,
             }
+            from iatest.engines.verdicts import assessment_metrics
+            assessed = sum(bool(row["controls_reproduced"]) for row in result.steps)
+            result.metrics.update(assessment_metrics(len(urls) * len(library["rules"]), assessed, len(findings)))
+            result.metrics["scope_complete"] = not unassessed
             result.limitations = [
                 "Only explicit scoped pages and reviewed catalogue rules; a version/CVE label alone is not an exploit proof"
             ]

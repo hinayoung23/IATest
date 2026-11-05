@@ -6,12 +6,13 @@ import re
 from pathlib import Path
 from typing import Any
 
-from iatest.core.env import load_dotenv
+from iatest.core.env import load_dotenv, env_value
 from iatest.core.paths import PROJECT_CONFIG, ensure_project_dirs
 from iatest.core.serde import read_json, write_json
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "config_version": 1,
     "artifacts": {
         "language": "en",
     },
@@ -60,6 +61,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "mock": {
         "host": "127.0.0.1",
+        "allow_lan": False,
+        "management_token_env": "",
         "port": 8780,
         "max_request_bytes": 1000000,
         "max_history": 200,
@@ -67,6 +70,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "web": {
         "max_request_bytes": 20000000,
+        "allowed_origins": [],
+        "trusted_proxy_origins": [],
+        "require_session": True,
     },
     "retention": {
         "result_runs": 200,
@@ -163,7 +169,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "custom_strategies": [],
     },
     "agents": {
-        "task_budget": {"enabled": False, "max_tokens": 256000, "max_tool_calls": 500, "timeout_seconds": 1800},
+        "task_budget": {"enabled": True, "max_tokens": 256000, "max_tool_calls": 500, "timeout_seconds": 1800},
         "model_routing": {"rules": []},
         "recipes": {"paths": []},
         "token_optimization": {
@@ -239,8 +245,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
 def init_project(root: Path, project: str = "default") -> Path:
     ensure_project_dirs(root, project)
     path = root / PROJECT_CONFIG
-    if not path.exists():
-        write_json(path, DEFAULT_CONFIG)
+    from iatest.core.locking import workspace_config_lock
+    with workspace_config_lock(root):
+        if not path.exists():
+            write_json(path, DEFAULT_CONFIG)
     return path
 
 
@@ -251,11 +259,77 @@ def load_config(root: Path) -> dict[str, Any]:
     # defaults and contaminate other projects/tests.
     config = copy.deepcopy(DEFAULT_CONFIG)
     loaded = read_json(root / PROJECT_CONFIG, {})
-    return deep_merge(config, loaded)
+    if not isinstance(loaded, dict):
+        raise ValueError("Configuration must be a JSON object")
+    if loaded and "config_version" not in loaded:
+        loaded = copy.deepcopy(loaded)
+        # Existing projects retain their explicitly chosen cost policy.
+        agents = loaded.setdefault("agents", {})
+        if isinstance(agents, dict):
+            budget = agents.setdefault("task_budget", {})
+            if isinstance(budget, dict):
+                budget.setdefault("enabled", False)
+        if isinstance(loaded.get("llm"), dict) and "master" not in loaded["llm"] and loaded["llm"]:
+            from iatest.ai.llm_config import normalize_llm_config
+            loaded["llm"] = normalize_llm_config(loaded["llm"])
+    config = deep_merge(config, loaded)
+    from iatest.core.config_schema import validate_config
+    validate_config(config, DEFAULT_CONFIG)
+    return ConfigSnapshot(config, root)
 
 
 def save_config(root: Path, config: dict[str, Any]) -> None:
-    write_json(root / PROJECT_CONFIG, config)
+    from iatest.core.config_schema import validate_config
+    from iatest.core.locking import workspace_config_lock
+    with workspace_config_lock(root):
+        if isinstance(config, ConfigSnapshot) and config.root == root.resolve():
+            current = dict(load_config(root))
+            merged = _merge_changes(current, config.baseline, config, "$")
+        else:
+            merged = deep_merge(copy.deepcopy(DEFAULT_CONFIG), config)
+        validate_config(merged, DEFAULT_CONFIG)
+        write_json(root / PROJECT_CONFIG, merged)
+        if isinstance(config, ConfigSnapshot):
+            config.clear()
+            config.update(merged)
+            config.baseline = copy.deepcopy(merged)
+
+
+class ConfigSnapshot(dict):
+    """A mutable configuration with a baseline for conflict-safe saves."""
+
+    def __init__(self, value: dict, root: Path):
+        super().__init__(value)
+        self.root = root.resolve()
+        self.baseline = copy.deepcopy(value)
+
+
+def _merge_changes(current: dict, before: dict, after: dict, path: str) -> dict:
+    merged = copy.deepcopy(current)
+    absent = object()
+    for key in before.keys() | after.keys():
+        old, new = before.get(key, absent), after.get(key, absent)
+        if old == new:
+            continue
+        present = current.get(key, absent)
+        if isinstance(old, dict) and isinstance(new, dict) and isinstance(present, dict):
+            merged[key] = _merge_changes(present, old, new, path + "." + key)
+        elif present != old and present != new:
+            raise ValueError(f"Configuration changed concurrently at {path}.{key}; reload before saving")
+        elif new is absent:
+            merged.pop(key, None)
+        else:
+            merged[key] = copy.deepcopy(new)
+    return merged
+
+
+def update_config(root: Path, change) -> dict[str, Any]:
+    from iatest.core.locking import workspace_config_lock
+    with workspace_config_lock(root):
+        config = load_config(root)
+        change(config)
+        save_config(root, config)
+        return config
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -281,7 +355,7 @@ def resolve_env_vars(value: Any) -> Any:
     if isinstance(value, str):
         def replace(match) -> str:
             name = match.group(1)
-            resolved = os.getenv(name)
+            resolved = env_value(name)
             if resolved is None or resolved == "":
                 raise ValueError(f"环境变量未配置或为空：{name}")
             return resolved

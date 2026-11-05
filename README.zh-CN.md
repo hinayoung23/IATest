@@ -21,7 +21,7 @@ IATest 把业务目标连接为真实界面操作、独立回放和可复用测�
 
 通过本地 Web 控制台或 CLI 使用。目标、用例、计划、规则和指标资料统一管理；原始断言与证据和 AI 解读分别呈现。
 
-2.1.0 将项目资产统一保存为按测试类型分类的可读文件，查询索引可重建，并兼容迁移旧目录和数据库。升级前请阅读[版本与迁移说明](docs/releases/2.1.0.md)。
+2.1.1 加固控制台会话、凭据发送目标和配置并发更新，补充明确的检查计数与发布质量门禁。升级前请阅读[2.1.1 说明](docs/releases/2.1.1.md)和[控制台安全指南](docs/guides/console-security.md)。[2.1.0](docs/releases/2.1.0.md) 引入的文件资产布局保持兼容。
 
 ![从目标、观察探索、独立回放到资产和证据的工作流](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.0/docs/assets/workflow.svg)
 
@@ -30,14 +30,14 @@ IATest 把业务目标连接为真实界面操作、独立回放和可复用测�
 需要 **Python 3.11+**。浏览器、手机和桌面测试按目标另行准备环境。
 
 ```sh
-python -m pip install "iatest-framework==2.1.0"
+python -m pip install "iatest-framework==2.1.1"
 mkdir my-tests
 cd my-tests
 iatest init --project demo
 iatest web --project demo
 ```
 
-访问 **http://127.0.0.1:8765**，在「设置」中配置模型与已有环境变量引用，再打开「测试工作台 → 界面与交互」：
+打开 **`iatest web` 打印的一次性授权链接**。先通过本机 `iatest llm-trust` 登记模型目标和凭据引用，再在「设置」中选择同一连接，详见[连接配置](docs/guides/console-security.md)。然后打开「测试工作台 → 界面与交互」：
 
 1. 选择浏览器、Android、iPhone/iPad 或桌面应用。
 2. 填写业务目标，以及怎样才算通过。

@@ -11,17 +11,18 @@ jobs:
   linux-desktop:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
       - name: Install X11 and AT-SPI acceptance environment
         run: |
           sudo apt-get update
           sudo apt-get install -y libatspi2.0-0 at-spi2-core dbus-x11 xvfb xauth openbox python3-gi gir1.2-gtk-3.0
-          python -m pip install ".[test]"
+          python -m pip install --require-hashes -r requirements/ci.txt
+          python -m pip install --no-deps --no-build-isolation ".[test]"
       - name: Verify real Linux desktop input
         env:
           IATEST_TEST_LINUX_DESKTOP: '1'
@@ -37,22 +38,49 @@ jobs:
           - {os: windows-latest, python: '3.14'}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install ".[test,database,hid]"
+      - run: python -m pip install --require-hashes -r requirements/ci.txt
+      - run: python -m pip install --no-deps --no-build-isolation ".[test,database,hid]"
       - name: Verify project-independent contracts
         run: python -m pytest -q tests/test_project_isolation.py
       - name: Verify Linux browser process budget
         if: runner.os == 'Linux'
         run: python scripts/validate_browser_budget.py
       - run: python -m pytest -q --junitxml=test-results.xml
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: test-results-${{ matrix.os }}-${{ matrix.python }}
           path: test-results.xml
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+          cache: pip
+      - run: python -m pip install --require-hashes -r requirements/ci.txt
+      - run: python -m pip install --no-deps --no-build-isolation .
+      - run: python -m ruff check .
+      - run: python -m mypy
+      - run: python -m coverage run -m pytest -q tests/test_release_hardening.py tests/test_browser_startup.py tests/test_delivery_hardening.py tests/test_safari_policy.py
+      - run: python -m coverage report
+      - run: python -m coverage xml
+      - run: python scripts/benchmark_core.py --output benchmark.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: quality-and-benchmarks
+          path: |
+            coverage.xml
+            benchmark.json

@@ -12,6 +12,7 @@ from iatest.ai.case_generation import generate_cases_with_llm, generate_suppleme
 from iatest.ai.conflict_review import review_conflicts_with_llm
 from iatest.ai.llm_config import is_llm_configured, normalize_llm_config, resolve_llm_role
 from iatest.ai.provider import DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS
+from iatest.ai.analysis_outcome import AnalysisOutcome, AnalysisMarkdown
 from iatest.ai.result_analysis import analyze_results_with_llm, review_failed_results_with_llm
 from iatest.context.extraction import process_report_analysis
 from iatest.context.injection import build_context_bundle
@@ -1258,8 +1259,9 @@ def case_generation_fingerprint(
                 keys = {(endpoint.method.upper(), endpoint.path) for endpoint in endpoints}
                 lessons = conn.execute("select id, revision, updated_at, method, path from lessons where project = ? and lifecycle_status in ('active', 'reopened') and review_status = 'confirmed'", (safe_project_name(project),)).fetchall()
                 lesson_version = sorted([dict(row) for row in lessons if not row["method"] or not row["path"] or (str(row["method"]).upper(), row["path"]) in keys], key=lambda row: row["id"])
-    except Exception:
-        pass
+    except Exception as exc:
+        record_operational_error(root, project, component="generation_cache", operation="read_knowledge_version", error=exc)
+        return ""
     role_dir = Path(__file__).resolve().parents[1] / "agents" / "identities"
     role_versions = {
         name: hashlib.sha256((role_dir / name).read_bytes()).hexdigest()
@@ -1328,6 +1330,8 @@ def load_generation_cache(
     from iatest.core.paths import project_generation_cache
     from iatest.core.serde import case_from_dict, read_json
 
+    if not fingerprint:
+        return None
     payload = read_json(project_generation_cache(root, project), {})
     if not isinstance(payload, dict) or payload.get("fingerprint") != fingerprint:
         return None
@@ -1341,7 +1345,7 @@ def load_generation_cache(
 
 
 def save_generation_cache(root: Path, project: str, fingerprint: str, cases: list[TestCase]) -> None:
-    if not cases:
+    if not cases or not fingerprint:
         return
     from datetime import datetime, timezone
     from iatest.core.paths import project_generation_cache
@@ -2409,16 +2413,16 @@ def experience_quality_gate_issues(value: dict[str, object]) -> list[dict]:
     return issues
 
 
-def build_ai_report_analysis(
+def _build_ai_report_analysis(
     root: Path,
     project: str,
     results: list[CaseResult],
     *,
     artifact_language: str | None = None,
-) -> str:
+) -> AnalysisOutcome:
     llm = configured_llm(root, "analyzer")
     if not is_llm_configured(llm):
-        return ""
+        return AnalysisOutcome("skipped")
     config = load_config(root)
     language = configured_artifact_language(config, artifact_language)
     set_current_artifact_language(language)
@@ -2652,7 +2656,7 @@ def build_ai_report_analysis(
             ),
         )
         if report_selected is None:
-            return ""
+            return AnalysisOutcome("degraded", error_code="no_safe_analysis", run_id=getattr(report_audit, "session_id", ""))
         selected_experiences = (
             experience_selected.artifact
             if experience_selected is not None
@@ -2690,7 +2694,7 @@ def build_ai_report_analysis(
                 _govern_report(root, project, results, analysis, visible)
             if _governance_enabled(root):
                 _govern_experience_candidates(root, project)
-        return visible
+        return AnalysisOutcome("degraded" if analysis_error or not report_selected.passed else "completed", markdown=visible, run_id=getattr(report_audit, "session_id", ""))
     except Exception as exc:
         try:
             if (report_audit.repository.get_session(report_audit.session_id) or {}).get("status") == "running":
@@ -2700,7 +2704,32 @@ def build_ai_report_analysis(
         except Exception:
             pass
         record_operational_error(root, project, component="report_analysis", operation="analyze_results", error=exc)
-        return f"大模型分析失败：{exc}"
+        from iatest.core.redaction import redact_text
+        return AnalysisOutcome("failed", error_code=type(exc).__name__, error=redact_text(str(exc)), run_id=getattr(report_audit, "session_id", ""), retryable=isinstance(exc, (TimeoutError, ConnectionError)))
+
+
+def build_ai_report_analysis_result(root: Path, project: str, results: list[CaseResult], *, artifact_language: str | None = None) -> AnalysisOutcome:
+    from dataclasses import asdict, replace
+    from iatest.core.paths import project_runtime_dir
+    from iatest.core.redaction import redact, redact_text
+    from iatest.core.serde import write_json
+    from iatest.core.observability import trace_context
+    import uuid
+
+    try:
+        outcome = _build_ai_report_analysis(root, project, results, artifact_language=artifact_language)
+    except Exception as exc:
+        record_operational_error(root, project, component="report_analysis", operation="prepare_analysis", error=exc)
+        outcome = AnalysisOutcome("failed", error_code=type(exc).__name__, error=redact_text(str(exc)))
+    if not outcome.run_id:
+        outcome = replace(outcome, run_id="analysis-" + uuid.uuid4().hex[:20])
+    write_json(project_runtime_dir(root, project) / "analysis-status" / (outcome.run_id + ".json"), redact({**asdict(outcome), "trace": trace_context()}))
+    return outcome
+
+
+def build_ai_report_analysis(root: Path, project: str, results: list[CaseResult], *, artifact_language: str | None = None) -> str:
+    """Compatibility text API; use *_result for explicit completion/error status."""
+    return build_ai_report_analysis_result(root, project, results, artifact_language=artifact_language).markdown
 
 
 @bounded_task
@@ -2714,12 +2743,12 @@ def build_ai_report_bundle(
     """One analyzer run supplies both failure attribution and the full report."""
     if not results:
         return "", ""
-    return "", build_ai_report_analysis(
+    return "", AnalysisMarkdown(build_ai_report_analysis_result(
         root,
         project,
         results,
         artifact_language=artifact_language,
-    )
+    ))
 
 
 def review_context_conflicts(root: Path, project: str) -> None:

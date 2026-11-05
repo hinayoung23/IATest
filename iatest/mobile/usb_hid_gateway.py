@@ -1,6 +1,7 @@
 """Linux USB-gadget report writer and an authenticated loopback control service."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import argparse
 import hmac
@@ -260,7 +261,7 @@ def main():
     parser.add_argument("--token-env", required=True)
     parser.add_argument("--port", type=int, default=19430)
     args = parser.parse_args()
-    token = os.environ.get(args.token_env, "")
+    token = environment_values().get(args.token_env, "")
     if not 32 <= len(token) <= 256 or not token.isascii() or not token.isalnum():
         raise ValueError("Provide an existing 32–256 character alphanumeric token env")
     writer = GadgetWriter(args.keyboard, args.mouse, args.absolute_mouse, args.digitizer)

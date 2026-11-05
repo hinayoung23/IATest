@@ -8,13 +8,16 @@ import re
 import secrets
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from iatest.ai.llm_config import normalize_llm_base_url, normalize_llm_config, normalize_llm_provider, normalize_llm_role, resolve_llm_role
-from iatest.ai.provider import llm_check, looks_like_api_key
+from iatest.ai.provider import llm_check
+from iatest.web.settings import (_write_env_value, api_key_placeholder, bounded_form_float, bounded_form_int, display_api_key_ref, field, llm_role_from_form, managed_key_name, mask_secret, normalize_api_key_ref, write_env_value)
 from iatest.ai.workflows import apply_ai_discovery_if_configured, build_ai_report_bundle, case_quality_gate_issues, generate_cases_with_config, supplement_cases_with_config
 from iatest.context.dependencies import synchronize_project_dependencies
 from iatest.context.extraction import retry_due_report_extractions
@@ -106,32 +109,11 @@ _STARTED_WORKERS: set[tuple[str, str]] = set()
 _STARTED_WORKERS_LOCK = threading.Lock()
 _WEB_MOCK_SERVERS: dict[str, tuple[ReusableThreadingHTTPServer, threading.Thread]] = {}
 _WEB_MOCK_SERVERS_LOCK = threading.Lock()
-_CSRF_TOKEN = secrets.token_urlsafe(32)
-
-
-def origin_matches_host(origin: str, host: str) -> bool:
-    """Accept the exact origin plus equivalent loopback aliases."""
-    try:
-        parsed_origin = urlparse(origin)
-        parsed_host = urlparse("//" + host)
-        if parsed_origin.scheme not in {"http", "https"} or not parsed_origin.hostname or not parsed_host.hostname:
-            return False
-        if parsed_origin.netloc.casefold() == host.casefold():
-            return True
-        loopbacks = {"localhost", "127.0.0.1", "::1"}
-        origin_port = parsed_origin.port or (443 if parsed_origin.scheme == "https" else 80)
-        host_port = parsed_host.port or origin_port
-        return (
-            parsed_origin.hostname.casefold() in loopbacks
-            and parsed_host.hostname.casefold() in loopbacks
-            and origin_port == host_port
-        )
-    except ValueError:
-        return False
+from iatest.web.security import ACTIVE_CSRF, CSRF_TOKEN as _CSRF_TOKEN, ConsoleSecurity, origin_matches_host
 
 
 def protect_post_forms(content: str) -> str:
-    hidden = f'<input type="hidden" name="_csrf" value="{html.escape(_CSRF_TOKEN, quote=True)}">'
+    hidden = f'<input type="hidden" name="_csrf" value="{html.escape(ACTIVE_CSRF.get(), quote=True)}">'
     pattern = re.compile(r"(<form\b[^>]*\bmethod\s*=\s*(['\"])post\2[^>]*>)", re.IGNORECASE)
     return pattern.sub(lambda match: match.group(1) + hidden, content)
 
@@ -142,11 +124,18 @@ def serve(root: Path, host: str = "127.0.0.1", port: int = 8765, project: str = 
     project = safe_project_name(project)
     for known_project in sorted(set(list_projects(root)) | {project}):
         recover_stale_tasks(root, known_project)
+    from iatest.ai.connections import bootstrap_connections
+    bootstrap_connections(root)
     start_context_retry_worker(root, project)
     start_web_task_worker(root, project)
-    handler = make_handler(root, project)
+    settings = load_config(root).get("web", {})
+    security = ConsoleSecurity(port=port, allowed_origins=tuple(settings.get("allowed_origins", [])), require_session=settings.get("require_session", True), csrf=secrets.token_urlsafe(32))
+    handler = make_handler(root, project, security=security)
     server = ThreadingHTTPServer((host, port), handler)
-    print(f"本地 Web 控制台已启动: http://{host}:{port}")
+    security.port = server.server_port
+    address = f"[{host}]" if ":" in host else host
+    authorization = f"/session?token={security.bootstrap}" if security.require_session else "/"
+    print(f"本地 Web 控制台已启动: http://{address}:{server.server_port}{authorization}", flush=True)
     try:
         server.serve_forever()
     finally:
@@ -270,6 +259,8 @@ def start_context_retry_worker(root: Path, project: str) -> None:
 
 
 def start_web_task_worker(root: Path, project: str) -> None:
+    from iatest.web.queue_signal import queue_event
+    wakeup = queue_event(root)
     worker_key = (str(root.resolve()), "web-task")
     with _STARTED_WORKERS_LOCK:
         if worker_key in _STARTED_WORKERS:
@@ -278,6 +269,7 @@ def start_web_task_worker(root: Path, project: str) -> None:
 
     def worker() -> None:
         while True:
+            wakeup.clear()
             for known_project in sorted(set(list_projects(root)) | {project}):
                 try:
                     tasks = queued_tasks(root, known_project, limit=20)
@@ -292,13 +284,25 @@ def start_web_task_worker(root: Path, project: str) -> None:
                     continue
                 for task in tasks:
                     submit_web_task(root, known_project, str(task["id"]))
-            time.sleep(1)
+            wakeup.wait(10)
 
     threading.Thread(target=worker, name="iatest-web-task-worker", daemon=True).start()
 
 
-def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandler]:
+def make_handler(root: Path, default_project: str, *, security=None) -> type[BaseHTTPRequestHandler]:
+    security = security or ConsoleSecurity()
+
     class Handler(BaseHTTPRequestHandler):
+        def handle_one_request(self):
+            from iatest.ai.connections import connection_scope
+            from iatest.core.observability import trace_scope
+            token = ACTIVE_CSRF.set(security.csrf)
+            try:
+                with connection_scope(root), trace_scope("web_request", request_id=uuid.uuid4().hex):
+                    super().handle_one_request()
+            finally:
+                ACTIVE_CSRF.reset(token)
+
         def prepare_locale(self, parsed) -> None:
             self.web_locale = set_current_locale(
                 locale_from_request(parsed.query, self.headers.get("Cookie", ""))
@@ -314,6 +318,9 @@ def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandle
                 )
 
         def end_headers(self) -> None:
+            from iatest.core.observability import trace_context
+            if request_id := trace_context().get("request_id"):
+                self.send_header("X-Request-Id", request_id)
             buffered = b"".join(getattr(self, "_headers_buffer", [])).lower()
             if b"x-content-type-options:" not in buffered:
                 self.send_header("X-Content-Type-Options", "nosniff")
@@ -323,6 +330,8 @@ def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandle
             super().end_headers()
 
         def do_HEAD(self) -> None:
+            if not security.authorize(self):
+                return
             parsed = urlparse(self.path)
             self.prepare_locale(parsed)
             project = active_project(parsed, default_project)
@@ -347,6 +356,8 @@ def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandle
             self.send_error(404)
 
         def do_GET(self) -> None:
+            if not security.authorize(self):
+                return
             parsed = urlparse(self.path)
             self.prepare_locale(parsed)
             project = active_project(parsed, default_project)
@@ -458,10 +469,13 @@ def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandle
                 self.send_error(404)
 
         def do_POST(self) -> None:
+            if not security.authorize(self):
+                return
             parsed = urlparse(self.path)
             self.prepare_locale(parsed)
-            origin = self.headers.get("Origin", "")
-            host = self.headers.get("Host", "")
+            if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
+                self.respond_error(400, "需要唯一的 Content-Length，且不支持 Transfer-Encoding")
+                return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
@@ -478,7 +492,7 @@ def make_handler(root: Path, default_project: str) -> type[BaseHTTPRequestHandle
                 return
             form = parse_qs(payload)
             csrf_token = field(form, "_csrf")
-            if origin and not origin_matches_host(origin, host) and not hmac.compare_digest(csrf_token, _CSRF_TOKEN):
+            if not security.valid_post(self.headers, csrf_token):
                 self.respond_error(403, "跨站请求已拒绝，请刷新控制台页面后重试")
                 return
             try:
@@ -647,6 +661,8 @@ def submit_web_task(root: Path, project: str, task_id: str, target=None) -> bool
 
 def run_task_by_id(root: Path, project: str, task_id: str, target=None) -> None:
     from iatest.execution.control import RunControl, RunCancelled, ExecutionRuntime, activate
+    from iatest.ai.connections import connection_scope
+    from iatest.core.observability import trace_scope
     task = claim_task(root, project, task_id)
     if not task:
         return
@@ -666,7 +682,7 @@ def run_task_by_id(root: Path, project: str, task_id: str, target=None) -> None:
 
     threading.Thread(target=heartbeat, name=f"iatest-{project}-{action}-heartbeat", daemon=True).start()
     try:
-        with activate(ExecutionRuntime(control=control)), project_operation_lock(root, project, operation=f"web-task:{action}"):
+        with trace_scope("web_task", inherited=(task.get("payload") or {}).get("_trace"), task_id=task_id, project=project), connection_scope(root), activate(ExecutionRuntime(control=control)), project_operation_lock(root, project, operation=f"web-task:{action}"):
             control.check()
             message = target(progress) if target else execute_web_task(root, project, str(task["kind"]), task.get("payload") or {}, progress)
             control.check()
@@ -1152,7 +1168,7 @@ def handle_action(root: Path, project: str, path: str, form: dict, handler) -> N
         config = load_config(root)
         role = normalize_llm_role(field(form, "role"))
         config["llm"] = normalize_llm_config(config.get("llm", {}))
-        config["llm"][role] = llm_role_from_form(root, role, form, config["llm"][role])
+        config["llm"][role] = llm_role_from_form(root, role, form, config["llm"][role], enforce_trust=True)
         save_config(root, config)
         handler.redirect(url_for("/config", project, {"saved": "llm"}))
         return
@@ -1234,6 +1250,7 @@ def handle_action(root: Path, project: str, path: str, form: dict, handler) -> N
             config = load_config(root)
             mock = config.setdefault("mock", {})
             mock["host"] = field(form, "host").strip() or "127.0.0.1"
+            mock["allow_lan"] = field(form, "allow_lan") == "on"
             mock["port"] = bounded_form_int(field(form, "port"), 8780, 0, 65535)
             mock["max_request_bytes"] = bounded_form_int(
                 field(form, "max_request_bytes"), 1_000_000, 1, 20_000_000
@@ -3498,6 +3515,7 @@ def render_mock_config(root: Path, project: str, config: dict[str, Any]) -> str:
       <summary>编辑接口 Mock 配置</summary>
       <form method="post" action="/actions/save-mock" class="stack-form">
         {hidden_project(project)}
+        <label><input type="checkbox" name="allow_lan" {'checked' if config.get('allow_lan') else ''}> 允许局域网设备访问 Mock 路由（请求历史和重置接口仍单独保护）</label>
         <label>
           <span>监听地址</span>
           <input name="host" value="{esc(config.get('host', '127.0.0.1'))}" placeholder="127.0.0.1" required>
@@ -3795,22 +3813,6 @@ def render_llm_role_form(project: str, role: str, config: dict) -> str:
     )
 
 
-def llm_role_from_form(root: Path, role: str, form: dict, existing: dict | None = None) -> dict:
-    existing = existing or {}
-    base_url = field(form, "base_url")
-    model = field(form, "model")
-    api_key_env = normalize_api_key_ref(root, role, field(form, "api_key_env") or existing.get("api_key_env", ""))
-    provider = normalize_llm_provider(field(form, "provider") or "openai-compatible")
-    return {
-        **existing,
-        "enabled": bool(base_url and model and api_key_env),
-        "provider": provider,
-        "base_url": normalize_llm_base_url(provider, base_url),
-        "model": model,
-        "api_key_env": api_key_env,
-        "supports_tools": field(form, "supports_tools") == "on",
-        "supports_images": field(form, "supports_images") == "on",
-    }
 
 
 def render_agent_runtime_config(
@@ -3919,72 +3921,22 @@ def render_agent_runtime_config(
     """
 
 
-def bounded_form_int(value: str, default: int, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(minimum, min(maximum, parsed))
 
 
-def bounded_form_float(value: str, default: float, minimum: float, maximum: float) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(minimum, min(maximum, parsed))
 
 
-def normalize_api_key_ref(root: Path, role: str, value: str) -> str:
-    stripped = value.strip()
-    if not stripped:
-        return ""
-    if looks_like_api_key(stripped):
-        env_name = {
-            "master": "IATEST_MASTER_KEY",
-            "case_generator": "IATEST_CASE_GENERATOR_KEY",
-            "analyzer": "IATEST_ANALYZER_KEY",
-        }.get(role, "IATEST_LLM_API_KEY")
-        write_env_value(root / ".env", env_name, stripped)
-        return env_name
-    return stripped
 
 
-def write_env_value(path: Path, key: str, value: str) -> None:
-    lines = []
-    found = False
-    if path.exists():
-        lines = path.read_text(encoding="utf-8").splitlines()
-    for index, line in enumerate(lines):
-        if line.strip().startswith(f"{key}="):
-            lines[index] = f"{key}={value}"
-            found = True
-            break
-    if not found:
-        lines.append(f"{key}={value}")
-    atomic_write_text(path, "\n".join(lines) + "\n")
 
 
-def display_api_key_ref(value: str) -> str:
-    value = value.strip()
-    if not value:
-        return "-"
-    if value.startswith(("sk-", "sk_", "ak-", "ak_")) or "." in value or "-" in value or len(value) >= 32:
-        return mask_secret(value)
-    return value
 
 
-def mask_secret(value: str) -> str:
-    if len(value) <= 10:
-        return "******"
-    return f"{value[:4]}{'*' * max(len(value) - 8, 6)}{value[-4:]}"
 
 
-def api_key_placeholder(value: str) -> str:
-    value = value.strip()
-    if not value:
-        return "未配置 API Key"
-    return f"当前：{display_api_key_ref(value)}"
+
+
+
+
 
 
 def llm_provider_label(provider: str) -> str:
@@ -4595,8 +4547,6 @@ def is_safe_report_name(name: str) -> bool:
     return is_report_filename(name)
 
 
-def field(form: dict, name: str) -> str:
-    return (form.get(name) or [""])[0]
 
 
 def bounded_int(value: str, *, default: int, minimum: int, maximum: int) -> int:

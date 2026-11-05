@@ -1,6 +1,7 @@
 """Read-only, bounded database sources with explicit table authorization."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import os
 import sqlite3
@@ -104,7 +105,7 @@ def read_records(source, control, *, root=None, project="default"):
 
         validate(source, NETWORK_SCHEMA)
         return read_network_records(source, control, root=root, project=project)
-    path = Path(os.environ.get(source["path_env"], "")).expanduser()
+    path = Path(environment_values().get(source["path_env"], "")).expanduser()
     if not path.is_absolute() or not path.is_file():
         raise ValueError(
             "SQLite path environment must select an existing absolute file"

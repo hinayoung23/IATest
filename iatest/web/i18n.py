@@ -24,6 +24,11 @@ _CURRENT_LOCALE: ContextVar[str] = ContextVar("iatest_web_locale", default="zh")
 # produced from stored enum values and composed statistics rather than fixed
 # HTML text nodes.
 _RUNTIME_TRANSLATIONS: dict[str, dict[str, str]] = {
+    "凭据来源": {"en": "Credential source", "ja": "認証情報の参照元", "fr": "Source des identifiants", "ru": "Источник учётных данных"},
+    "环境变量引用": {"en": "Environment variable reference", "ja": "環境変数の参照", "fr": "Référence à une variable d’environnement", "ru": "Ссылка на переменную окружения"},
+    "输入新凭据": {"en": "Enter a new credential", "ja": "新しい認証情報を入力", "fr": "Saisir de nouveaux identifiants", "ru": "Ввести новые учётные данные"},
+    "已登记的凭据": {"en": "Enrolled credential", "ja": "登録済みの認証情報", "fr": "Identifiants enregistrés", "ru": "Зарегистрированные учётные данные"},
+    "允许局域网设备访问 Mock 路由（请求历史和重置接口仍单独保护）": {"en": "Allow LAN devices to access Mock routes (history and reset remain protected)", "ja": "LAN デバイスの Mock ルートへのアクセスを許可（履歴とリセットは別途保護）", "fr": "Autoriser les appareils LAN à accéder aux routes Mock (historique et réinitialisation protégés)", "ru": "Разрешить устройствам LAN доступ к Mock (история и сброс защищены отдельно)"},
     "模型支持图像输入（启用局部视觉定位）": {"en": "Model supports image input (enable regional visual location)", "ja": "画像入力対応モデル（領域の視覚検索を有効化）", "fr": "Entrée image du modèle (recherche visuelle locale)", "ru": "Модель принимает изображения (локальный визуальный поиск)"},
     "统一管理 API、Web UI、性能、安全与移动端测试": {"en": "Manage API, Web UI, performance, security and mobile tests", "ja": "API・Web UI・性能・セキュリティ・モバイルテストを管理", "fr": "Gérer les tests API, Web UI, performance, sécurité et mobiles", "ru": "Управление тестами API, Web UI, производительности, безопасности и мобильных приложений"},
     "性能、安全与跨类型编排": {"en": "Performance, security and cross-type workflows", "ja": "性能・セキュリティ・複数種ワークフロー", "fr": "Performance, sécurité et workflows multi-types", "ru": "Производительность, безопасность и общие сценарии"},

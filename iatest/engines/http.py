@@ -1,6 +1,7 @@
 """Bounded native HTTP operations shared by typed engines; no retry of writes."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import json
 import os
@@ -89,11 +90,11 @@ def resolve_secrets(value):
     if isinstance(value, dict):
         if set(value) == {"$env"}:
             key = value["$env"]
-            if not isinstance(key, str) or not key or key not in os.environ:
+            if not isinstance(key, str) or not key or key not in environment_values():
                 raise ValueError(
                     "Referenced credential environment variable is missing"
                 )
-            return os.environ[key]
+            return environment_values()[key]
         return {k: resolve_secrets(v) for k, v in value.items()}
     if isinstance(value, list):
         return [resolve_secrets(v) for v in value]

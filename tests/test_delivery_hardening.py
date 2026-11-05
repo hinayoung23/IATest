@@ -516,7 +516,8 @@ def test_cold_context_database_can_start_atomic_retry_claim(tmp_path) -> None:
 def test_web_delete_endpoint_survives_proxy_origin_and_rerenders_pages(tmp_path) -> None:
     endpoint = Endpoint(method="GET", path="/api/items", summary="查询项目")
     write_json(project_docs_file(tmp_path, "demo"), [to_jsonable(endpoint)])
-    handler_type = make_handler(tmp_path, "demo")
+    from iatest.web.security import ConsoleSecurity
+    handler_type = make_handler(tmp_path, "demo", security=ConsoleSecurity(allowed_origins=("https://preview.example",)))
 
     def request(method: str, path: str, body: str = "", headers: dict[str, str] | None = None):
         request_headers = {"Host": "127.0.0.1:8765", **(headers or {})}

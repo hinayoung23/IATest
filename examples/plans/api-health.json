@@ -1,0 +1,10 @@
+{
+  "contract_version": 1,
+  "id": "api-health-status",
+  "kind": "api",
+  "title": "Health endpoint returns HTTP 200",
+  "spec": {
+    "allowed_origins": ["http://127.0.0.1:8000"],
+    "requests": [{"url": "http://127.0.0.1:8000/health", "expected_status": [200]}]
+  }
+}

@@ -379,4 +379,6 @@ class SecurityEngine:
             if assessed != len(plan.spec["checks"])
             else "passed"
         )
+        from iatest.engines.verdicts import assessment_metrics
+        result.metrics.update(assessment_metrics(len(plan.spec["checks"]), assessed, sum(row["verdict"] == "failed" for row in result.steps)))
         return result

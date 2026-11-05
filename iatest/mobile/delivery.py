@@ -1,6 +1,7 @@
 """Content-addressed App delivery and explicit fresh/upgrade preparation."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import hashlib
 import json
@@ -92,8 +93,8 @@ def sdk_tool(name):
     for sdk in filter(
         None,
         (
-            os.environ.get("ANDROID_SDK_ROOT"),
-            os.environ.get("ANDROID_HOME"),
+            environment_values().get("ANDROID_SDK_ROOT"),
+            environment_values().get("ANDROID_HOME"),
             str(Path.home() / "Library/Android/sdk"),
             str(Path.home() / "Android/Sdk"),
             "/opt/homebrew/share/android-commandlinetools",
@@ -347,7 +348,7 @@ def fetch_app(root, project, spec, *, control=None, inspector=inspect_package):
                 from iatest.mobile.bundles import convert_bundle
 
                 converted = Path(str(temporary) + ".apks")
-                with secret_scope([os.environ.get(spec["signing"][k], "") for k in ("store_password_env", "key_password_env")]):
+                with secret_scope([environment_values().get(spec["signing"][k], "") for k in ("store_password_env", "key_password_env")]):
                     convert_bundle(temporary, converted, spec["signing"], control)
                 converted.replace(temporary)
                 package_format = "apks"

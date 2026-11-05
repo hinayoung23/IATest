@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import httpx
+from iatest.core.observability import traced
 
 DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 180
 MODEL_HTTP_ATTEMPTS = ContextVar("iatest_model_http_attempts", default=0)
@@ -107,6 +108,7 @@ class ModelResponse:
         return message
 
 
+@traced("llm_request")
 def chat_completion(
     *,
     base_url: str,
@@ -119,6 +121,8 @@ def chat_completion(
     stream_callback: Callable[[str], None] | None = None,
     max_tokens: int | None = None,
 ) -> str:
+    from iatest.ai.connections import check_active_connection
+    check_active_connection(base_url, api_key_env)
     api_key = resolve_api_key(api_key_env)
     _debug_llm_log(messages, model, provider)
     if provider == "anthropic":
@@ -139,6 +143,7 @@ def chat_completion(
     return result
 
 
+@traced("llm_request")
 def model_completion(
     *,
     base_url: str,
@@ -155,6 +160,8 @@ def model_completion(
     max_tokens: int | None = None,
 ) -> ModelResponse:
     """Provider-neutral response with text, tool calls, finish reason and token usage."""
+    from iatest.ai.connections import check_active_connection
+    check_active_connection(base_url, api_key_env)
     api_key = resolve_api_key(api_key_env)
     if provider == "anthropic":
         return anthropic_model_completion(
@@ -792,7 +799,9 @@ def resolve_api_key(api_key_ref: str) -> str:
     api_key_ref = api_key_ref.strip()
     if not api_key_ref:
         raise ValueError("API Key 未配置")
-    api_key = os.getenv(api_key_ref)
+    from iatest.ai.connections import ACTIVE_CONNECTION_ROOT
+    from iatest.core.env import env_value
+    api_key = env_value(api_key_ref, root=ACTIVE_CONNECTION_ROOT.get())
     if api_key:
         return api_key
     if looks_like_api_key(api_key_ref):
@@ -1003,41 +1012,15 @@ repair_json_array = repair_json_output
 # LLM Debug Log — controlled by IATEST_DEBUG_LLM=1 env var
 # ═══════════════════════════════════════════════════════════════
 
-_DEBUG_LOG_PATH = "/tmp/iatest_llm_debug.log"
-_DEBUG_CALL_SEQ = 0
+_DEBUG_LOG_PATH = None
 
 
 def _debug_llm_log(messages: list[dict[str, str]], model: str, provider: str) -> None:
-    global _DEBUG_CALL_SEQ
-    if not os.getenv("IATEST_DEBUG_LLM"):
-        return
-    _DEBUG_CALL_SEQ += 1
-    import datetime
-    ts = datetime.datetime.now().strftime("%H:%M:%S")
-    with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(f"\n{'='*80}\n")
-        f.write(f"#{_DEBUG_CALL_SEQ} [{ts}] model={model} provider={provider}\n")
-        f.write(f"{'='*80}\n")
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "?")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                content = model_message_text(content) + "\n[image attachments omitted from debug logs]"
-            f.write(f"\n--- [{role}] ({len(content)} chars) ---\n")
-            f.write(content[:8000])
-            if len(content) > 8000:
-                f.write(f"\n... (truncated, total {len(content)} chars)")
-        f.write(f"\n\n--- [waiting for response] ---\n")
-        f.flush()
+    from iatest.ai.debug_log import log_event
+    safe_messages = [{"role": msg.get("role", ""), "content": model_message_text(msg.get("content", ""))} for msg in messages]
+    log_event("request", {"model": model, "provider": provider, "messages": safe_messages}, path=_DEBUG_LOG_PATH)
 
 
 def _debug_llm_log_response(result: str) -> None:
-    if not os.getenv("IATEST_DEBUG_LLM"):
-        return
-    with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(f"\n--- [response] ({len(result)} chars) ---\n")
-        f.write(result[:12000])
-        if len(result) > 12000:
-            f.write(f"\n... (truncated, total {len(result)} chars)")
-        f.write(f"\n{'='*80}\n")
-        f.flush()
+    from iatest.ai.debug_log import log_event
+    log_event("response", result, path=_DEBUG_LOG_PATH)

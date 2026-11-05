@@ -21,7 +21,7 @@ IATest turns a business goal into an observed UI journey, independent replay and
 
 Use the local Web console or CLI. Keep goals, cases, plans, rules and measurement assets together. Review original assertions and evidence alongside any AI explanation.
 
-Version 2.1.0 stores project assets as readable files grouped by test type, with rebuildable query indexes and compatible migration from previous layouts. See the [release and migration notes](docs/releases/2.1.0.md).
+Version 2.1.1 hardens console sessions, credential destinations and configuration updates, and adds explicit assessment counts and release quality gates. Read the [upgrade notes](docs/releases/2.1.1.md) and [console security guide](docs/guides/console-security.md). The file asset layout introduced in [2.1.0](docs/releases/2.1.0.md) remains compatible.
 
 ![IATest workflow: goal, exploration, independent replay, reusable assets and results](https://raw.githubusercontent.com/hinayoung23/IATest/v2.1.0/docs/assets/workflow.svg)
 
@@ -30,14 +30,14 @@ Version 2.1.0 stores project assets as readable files grouped by test type, with
 Requires **Python 3.11+**. Extra tools depend on the target you test.
 
 ```sh
-python -m pip install "iatest-framework==2.1.0"
+python -m pip install "iatest-framework==2.1.1"
 mkdir my-tests
 cd my-tests
 iatest init --project demo
 iatest web --project demo
 ```
 
-Open **http://127.0.0.1:8765**. In **Settings**, configure your model and environment-variable references. Then open **Test workspace → UI & interaction**:
+Open the one-time **authorization link printed by `iatest web`**. Enroll a model origin and credential reference locally with `iatest llm-trust`, then select that connection in **Settings**. See the [connection setup](docs/guides/console-security.md). Then open **Test workspace → UI & interaction**:
 
 1. Choose a browser, Android, iPhone/iPad or desktop target.
 2. Describe the business goal and a concrete expected outcome.
@@ -74,6 +74,8 @@ iatest test reports --project demo
 ```
 
 Saved deterministic plans run without model calls. AI is used when you request exploration, generation, visual assistance or evidence analysis.
+
+For complete API, data and browser examples, including CI exit semantics, see [deterministic execution](docs/guides/deterministic-ci.md).
 
 ## How it works
 

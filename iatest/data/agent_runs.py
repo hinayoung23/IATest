@@ -143,6 +143,8 @@ class AgentRunRepository:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         run_id = "agent-" + uuid.uuid4().hex[:20]
+        from iatest.core.observability import trace_context
+        metadata = {**(metadata or {}), "trace": trace_context()}
         with self.connection() as conn:
             conn.execute(
                 """
@@ -376,6 +378,13 @@ class AgentRunRepository:
     ) -> None:
         artifact_json = compact_json(redact_sensitive(artifact), 50000) if artifact is not None else ""
         with self.connection() as conn:
+            from iatest.agents.policy import ACTIVE_TASK_BUDGET
+            if budget := ACTIVE_TASK_BUDGET.get():
+                row = conn.execute("select metadata from agent_runs where id=?", (run_id,)).fetchone()
+                metadata = json.loads(row[0]) if row else {}
+                metadata["task_budget"] = budget.snapshot()
+                metadata["usage_estimated"] = usage.estimated
+                conn.execute("update agent_runs set metadata=? where id=?", (compact_json(redact_sensitive(metadata), 12000), run_id))
             conn.execute(
                 """
                 update agent_runs set status = ?, artifact_hash = ?, artifact_json = ?, input_tokens = ?,

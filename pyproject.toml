@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77.0.3"]
+requires = ["setuptools>=77.0.3,<90"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "iatest-framework"
-version = "2.1.0"
+version = "2.1.1"
 description = "AI-driven API, UI, performance and security test automation framework"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8,<9"]
+dev = ["coverage[toml]>=7.10,<8", "ruff>=0.14,<1", "mypy>=1.18,<2", "build>=1.2,<2", "twine>=6,<7", "setuptools>=77.0.3,<90"]
 hid = ["pypinyin>=0.55,<1"]
 database = [
   "psycopg[binary]>=3.3,<4",
@@ -98,3 +99,29 @@ iatest = [
   "mobile/native/ios/DebugApp/IATestDebugApp.xcodeproj/project.pbxproj",
   "mobile/native/ios/DebugApp/IATestDebugApp.xcodeproj/xcshareddata/xcschemes/*.xcscheme",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+extend-exclude = ["iatest/mobile/native", "iatest/engines/desktop_native"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["iatest/ai/connections.py", "iatest/ai/debug_log.py", "iatest/ai/analysis_outcome.py", "iatest/core/config_schema.py", "iatest/web/security.py", "iatest/engines/browser_wait.py", "iatest/engines/verdicts.py"]
+follow_imports = "skip"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+
+[tool.coverage.run]
+branch = true
+source = ["iatest.ai.connections", "iatest.ai.debug_log", "iatest.core.config_schema", "iatest.web.security", "iatest.engines.browser_wait", "iatest.engines.verdicts"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85

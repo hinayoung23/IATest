@@ -104,15 +104,8 @@ class BrowserContexts:
         return result["result"].get("value")
 
     def select_context(self, target):
-        deadline = time.monotonic() + min(5, self.control.remaining() or 5)
-        while True:
-            try:
-                return self._select_context(target)
-            except FrameNotReady:
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise ValueError("Selected frame did not commit its declared origin within the query budget") from None
-                self.control.wait(min(.05, left))
+        from iatest.engines.browser_wait import wait_for_context
+        return wait_for_context(self.control, lambda: self._select_context(target), FrameNotReady, "Selected frame did not commit its declared origin within the query budget")
 
     def _select_context(self, target):
         alias = target.get("page", self.page_alias)

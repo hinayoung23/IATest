@@ -1,4 +1,5 @@
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import base64
 import hashlib
@@ -125,7 +126,7 @@ class NodeWorker:
             "::1",
         }:
             raise ValueError("Remote node transport requires HTTPS")
-        token = os.environ.get(token_env, "")
+        token = environment_values().get(token_env, "")
         if len(token) < 16:
             raise ValueError(
                 "Node token environment variable must already contain at least 16 characters"

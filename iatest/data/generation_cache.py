@@ -91,7 +91,7 @@ class IncrementalGenerationCache:
                 missing.extend(group)
                 continue
             raw_cases = entry.get("cases", [])
-            if entry.get("fingerprint") != self.signatures[identifier] or entry.get("content_hash") != fingerprint(raw_cases):
+            if not self.signatures[identifier] or entry.get("fingerprint") != self.signatures[identifier] or entry.get("content_hash") != fingerprint(raw_cases):
                 missing.extend(group)
                 continue
             try:
@@ -111,7 +111,7 @@ class IncrementalGenerationCache:
             identifier = fingerprint(sorted(keys))
             # Newly observed cross-endpoint cases are conservatively regenerated next time.
             signature = self.signatures.get(identifier)
-            if signature is None:
+            if not signature:
                 continue
             members = [asdict(case) for case in cases if case_keys(case) and case_keys(case).issubset(keys)]
             if members:

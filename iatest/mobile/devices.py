@@ -1,4 +1,5 @@
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import hashlib
 import json
@@ -458,7 +459,7 @@ class NativeDevice:
         if self.profile.get("video_capture") == "app_stream":
             if codec != "h264":
                 raise ValueError("App ReplayKit stream supplies H264 only")
-            token = os.environ.get(self.profile["app_media_token_env"], "")
+            token = environment_values().get(self.profile["app_media_token_env"], "")
             if len(token) < 32:
                 raise ValueError(
                     "Existing App media authentication environment is missing"

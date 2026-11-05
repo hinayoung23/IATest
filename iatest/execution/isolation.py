@@ -1,5 +1,6 @@
 """Run-only workers: the parent owns project files, locks and result persistence."""
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import json
 import os
@@ -33,7 +34,7 @@ def worker_environment(settings: dict, temporary: Path) -> dict[str, str]:
     names = {"PATH", "SYSTEMROOT", "WINDIR", "LANG", "LC_ALL"} | set(string_list(settings, "env_allowlist"))
     if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) for name in names):
         raise ValueError("sandbox.env_allowlist 包含非法环境变量名称")
-    result = {name: os.environ[name] for name in names if name in os.environ}
+    result = {name: environment_values()[name] for name in names if name in environment_values()}
     result.update({"HOME": str(temporary), "USERPROFILE": str(temporary), "TMPDIR": str(temporary), "TMP": str(temporary), "TEMP": str(temporary), "PYTHONDONTWRITEBYTECODE": "1"})
     if os.name == "nt":
         # Windows Known Folder lookup still expands USERPROFILE's standard

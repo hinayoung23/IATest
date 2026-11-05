@@ -1043,8 +1043,6 @@ class WebEngine:
                     )
                 if browser.queries > plan.budget.get("max_queries", 500):
                     raise ValueError("Browser query budget exhausted")
-            if result.verdict == "not_evaluated":
-                result.verdict = "passed"
         except RunCancelled as exc:
             result.lifecycle = (
                 "timed_out" if "总时限" in context.control.reason() else "cancelled"
@@ -1076,4 +1074,7 @@ class WebEngine:
                     }
                 )
                 browser.close()
+        from iatest.engines.verdicts import summarize_checks, ui_check
+        assessed = [row for row in result.steps if "passed" in row]
+        summarize_checks(result, sum(ui_check(step) for step in plan.spec["steps"]), len(assessed), sum(row["passed"] is False for row in assessed))
         return result

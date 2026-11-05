@@ -1,6 +1,7 @@
 """Deterministic multi-request business transactions and phase scheduling."""
 
 from __future__ import annotations
+from iatest.core.env import environment_values
 
 import math
 import os
@@ -206,7 +207,7 @@ class TransactionEngine:
         for entry in spec.get("account_pool", []):
             try:
                 accounts.append(
-                    {k: os.environ[v] for k, v in entry["input_env"].items()}
+                    {k: environment_values()[v] for k, v in entry["input_env"].items()}
                 )
             except KeyError:
                 raise ValueError(

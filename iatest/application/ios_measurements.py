@@ -261,4 +261,6 @@ def evaluate_measurement(root, project, plan):
         "model_calls": 0,
         "metric_quality": value.get("metric_quality", {}),
     }
+    from iatest.engines.verdicts import assessment_metrics
+    result.metrics.update(assessment_metrics(len(plan.spec["thresholds"]), sum(bool(step["assessed"]) for step in result.steps), sum(bool(step["assessed"]) and not step["passed"] for step in result.steps)))
     return result

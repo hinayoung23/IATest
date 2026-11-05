@@ -1258,7 +1258,8 @@ def test_json_repair_succeeds_and_uses_ai_cases() -> None:
         # Repair may fail (no real LLM), but the error message must be user-friendly
         assert "Expecting" not in str(exc), f"raw JSON error leaked: {exc}"
         assert "自动修复" in str(exc), f"message not user-friendly: {exc}"
-        assert "本地规则" in str(exc), f"missing fallback hint: {exc}"
+        assert "未生成用例" in str(exc)
+        assert "已使用本地规则" not in str(exc)
         return
     # If repair somehow succeeds (unlikely without real LLM), warning must be clean
     assert "Expecting" not in warning
@@ -1416,7 +1417,8 @@ def test_generate_cases_entrypoint_repair_exhausted(monkeypatch) -> None:
         assert "JSONDecodeError" not in msg
         assert "自动修复" in msg
         assert "2 次" in msg
-        assert "本地规则" in msg
+        assert "未生成用例" in msg
+        assert "已使用本地规则" not in msg
 
 
 def test_api_discovery_repair_flow(monkeypatch) -> None:

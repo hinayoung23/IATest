@@ -74,6 +74,7 @@ def _repair_and_parse(
     provider: str,
 ) -> tuple[list[TestCase], str]:
     """Attempt to repair malformed JSON output from LLM. Returns (cases, warning)."""
+    last_error = None
     for attempt in range(1, MAX_REPAIR_ATTEMPTS + 1):
         try:
             repaired = repair_json_array(
@@ -89,13 +90,13 @@ def _repair_and_parse(
             msg = "已生成用例" if attempt == 1 else f"自动修复 {attempt} 次后已生成用例"
             return cases, f"大模型输出格式异常，{msg} {len(cases)} 个。"
         except (json.JSONDecodeError, ValueError) as exc:
+            last_error = exc
             error = str(exc)
-            content = content  # keep original for next repair reference
-        except Exception:
-            break
+        except Exception as exc:
+            raise RuntimeError(f"用例格式修复请求失败（第 {attempt} 次），未生成用例：{type(exc).__name__}") from exc
     raise ValueError(
-        f"大模型输出格式异常，自动修复 {MAX_REPAIR_ATTEMPTS} 次仍未成功，已使用本地规则生成用例。"
-    )
+        f"大模型输出格式异常，自动修复 {MAX_REPAIR_ATTEMPTS} 次仍未成功，未生成用例。"
+    ) from last_error
 
 
 def generate_supplemental_cases_with_llm(

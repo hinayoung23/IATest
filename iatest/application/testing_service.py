@@ -6,6 +6,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from iatest.core.redaction import redact
+from iatest.core.config import load_config
+from iatest.core.observability import trace_context, traced
 from iatest.engines.contracts import EngineContext, EngineResult, ExecutionPlan
 from iatest.engines.registry import create_engine_registry
 from iatest.engines.store import EngineStore
@@ -49,9 +51,11 @@ def safe_result(value):
     return clean(value)
 
 
+@traced("engine_run")
 def execute_test_plan(
     root: Path, project: str, value: str | dict, control=None
 ) -> dict:
+    load_config(root)
     store = EngineStore(root, project)
     plan = ExecutionPlan.from_dict(
         store.get_plan(value) if isinstance(value, str) else value
@@ -93,6 +97,8 @@ def _execute_test_plan(root, project, store, plan, control):
             error=str(exc),
         )
     # Preserve typed secret data only inside an executing workflow, not in storage/UI.
+    result.metrics["trace"] = {**trace_context(), "run_id": result.run_id, "plan_id": plan.id, "project": project}
+    result.metrics["isolation_mode"] = load_config(root).get("sandbox", {}).get("mode", "policy")
     sanitized = safe_result(asdict(result))
     result = EngineResult(**sanitized)
     store.save_result(result)

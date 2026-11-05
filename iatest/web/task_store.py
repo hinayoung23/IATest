@@ -183,6 +183,10 @@ def create_task(
     max_attempts: int = 2,
 ) -> dict[str, Any] | None:
     safe_project = safe_project_name(project)
+    from iatest.core.observability import trace_context
+    payload = dict(payload or {})
+    if trace := trace_context():
+        payload["_trace"] = trace
     now = time.time()
     task = {
         "id": uuid.uuid4().hex,
@@ -195,7 +199,7 @@ def create_task(
         "message": "",
         "stream_excerpt": "",
         "kind": kind or action,
-        "payload": json.dumps(payload or {}, ensure_ascii=False),
+        "payload": json.dumps(payload, ensure_ascii=False),
         "resumable": int(resumable),
         "attempt_count": 0,
         "max_attempts": max(1, int(max_attempts)),
@@ -241,6 +245,8 @@ def create_task(
             )),
         )
         prune_finished_tasks(conn, safe_project)
+    from iatest.web.queue_signal import notify_queue
+    notify_queue(root)
     return public_task(task)
 
 
